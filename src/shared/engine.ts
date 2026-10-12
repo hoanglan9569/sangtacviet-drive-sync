@@ -7,7 +7,7 @@
  *   3. upload what changed here: a small change file, not the whole data
  *   4. write the merged result back into the page — only if the page did not change
  *      meanwhile (compare-and-set), otherwise start over
- *   5. then, off the page's critical path: update dulieu.txt and save a backup version
+ *   5. then, off the page's critical path: update dulieu.txt, whose Drive revisions are the backup versions
  *
  * Each browser keeps a device file (all its data, as of change number `upTo`) and
  * change files numbered after it (stvSync = ops). Every few dozen changes it folds
@@ -16,7 +16,7 @@
  * Each browser writes only its own files, so two browsers syncing at the same
  * moment cannot overwrite each other's changes on Drive.
  */
-import { Drive, DriveError, type DriveFile, type FileMeta, quote } from "./drive";
+import { Drive, DriveError, type DriveFile, type FileMeta, type UploadOptions, quote } from "./drive";
 import {
   type Items,
   type WritePlan,
@@ -41,10 +41,13 @@ import {
   byNewest,
   clampPolicy,
   dayOf,
+  parseRevisionId,
   policyFrom,
   policyProps,
+  revisionName,
   toPrune,
   versionFrom,
+  versionFromRevision,
 } from "./backups";
 
 export const FOLDER_NAME = "SangTacViet Sync";
@@ -126,11 +129,9 @@ interface RemoteState {
   ops?: { id: string; seq: number }[];
   exportFileId?: string;
   exportHash?: string;
-  /** Hash of the newest backup version this browser knows of. */
-  backupHash?: string;
-  /** `rev` of the data dulieu.txt and the backups were last brought up to date with. */
+  /** `rev` of the data dulieu.txt was last brought up to date with. */
   publishedRev?: number;
-  /** The backup versions' ids as of the last sync: any change rewrites this state, which tells open Settings pages to refresh. */
+  /** dulieu.txt's content and the backup files as of the last sync: a new version rewrites this state, which tells open Settings pages to refresh. */
   versionIds?: string;
   /** Other browsers' device file id -> the newest of their changes merged here (and the file's checksum, for old-format files). */
   merged?: Record<string, { seq: number; sum?: string }>;
@@ -156,8 +157,10 @@ export interface RemoteSummary {
 
 const tag = (k: string) => `appProperties has { key='stvSync' and value='${k}' }`;
 const TAGGED = ["root", "device", "ops", "export"].map(tag).join(" or ");
-/** What a sync lists: everything it reads, plus the backup versions it may rotate. */
+/** What a sync lists: everything it reads, plus the backup files it may rotate. */
 const SYNC_LIST = `${TAGGED} or ${tag("backup")}`;
+/** What the backup versions are found from. */
+const VERSIONS_LIST = `trashed=false and (${tag("root")} or ${tag("export")} or ${tag("backup")})`;
 
 const kindOf = (f: DriveFile) => f.appProperties?.stvSync;
 const deviceOf = (f: DriveFile) => f.appProperties?.device ?? "";
@@ -174,8 +177,6 @@ const toWire = (items: Items, keys: Iterable<string>): WireItems => {
 const fromWire = (w: WireItems): Items => Object.fromEntries(Object.entries(w).map(([k, [t, v]]) => [k, { t, v }]));
 const isNotFound = (e: unknown) => e instanceof DriveError && e.status === 404;
 
-/** The newest version of the account's data (a "join" version holds one browser's own data). */
-const latest = (versions: BackupVersion[]) => versions.find((v) => v.reason !== "join");
 
 async function sha256(text: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -343,8 +344,8 @@ export class SyncEngine {
     remote.merged = merged;
     remote.devices = this.devicesFrom(files);
     remote.versionIds = files
-      .filter((f) => kindOf(f) === "backup")
-      .map((f) => f.id)
+      .filter((f) => kindOf(f) === "backup" || kindOf(f) === "export")
+      .map((f) => (kindOf(f) === "export" ? `${f.id}@${f.md5Checksum ?? f.modifiedTime}` : f.id))
       .sort()
       .join(",");
     return { changed, files };
@@ -448,15 +449,22 @@ export class SyncEngine {
     return true;
   }
 
-  private async upsert(id: string | undefined, content: string, type: string, meta: FileMeta & { parents: string[]; appProperties: Record<string, string> }): Promise<string> {
+  private async upsert(
+    id: string | undefined,
+    content: string,
+    type: string,
+    meta: FileMeta & { parents: string[]; appProperties: Record<string, string> },
+    opts?: UploadOptions,
+  ): Promise<string> {
     if (id) {
       try {
-        return (await this.drive.update(id, content, type, meta.appProperties)).id;
+        const { name: _n, ...rest } = meta;
+        return (await this.drive.update(id, content, type, rest, opts)).id;
       } catch (e) {
         if (!isNotFound(e)) throw e;
       }
     }
-    return (await this.drive.create(meta, content, type)).id;
+    return (await this.drive.create(meta, content, type, opts)).id;
   }
 
   private async ensureFolder(remote: RemoteState): Promise<string> {
@@ -471,38 +479,19 @@ export class SyncEngine {
   }
 
   /**
-   * Brings dulieu.txt and the backup versions up to date with the merged data, after the page
-   * already has it. The version is a server-side copy of dulieu.txt, so the data is uploaded
-   * once. Skipped when another browser already did it; a failure is retried by the next sync
-   * and never fails this one.
+   * Brings dulieu.txt up to date with the merged data, after the page already has it.
+   * Each upload is kept as a revision of dulieu.txt: those are the backup versions, so the
+   * data goes up once. Skipped when another browser already did it; a failure is retried
+   * by the next sync and never fails this one.
    */
   private async publish(state: AccountState, remote: RemoteState, files: DriveFile[]): Promise<void> {
     if (remote.publishedRev === state.rev && remote.exportHash) return;
     const c = counts(state.items);
     if (!c.books && !c.names) return;
-    const text = exportText(state.items);
-    const hash = await sha256(text);
     try {
-      const exp = files.find((f) => kindOf(f) === "export" && f.id === remote.exportFileId);
-      if (hash !== remote.exportHash) {
-        if (exp?.appProperties?.hash !== hash) {
-          remote.exportFileId = await this.upsert(remote.exportFileId, text, "text/plain", {
-            name: EXPORT_NAME,
-            parents: [await this.ensureFolder(remote)],
-            appProperties: { stvSync: "export", hash },
-          });
-        }
-        remote.exportHash = hash;
-      }
-      if (hash !== remote.backupHash) {
-        const versions = files.filter((f) => kindOf(f) === "backup").map(versionFrom).sort(byNewest);
-        if (latest(versions)?.hash !== hash) {
-          // dulieu.txt was just written with this data; a browser writing it in between only makes the copy newer.
-          const copy = await this.drive.copy(remote.exportFileId!, await this.backupMeta(hash, state.items, remote, "auto"));
-          const root = files.filter((f) => kindOf(f) === "root").sort(oldestFirst)[0];
-          await this.prune([versionFrom(copy), ...versions], policyFrom(root?.appProperties));
-        }
-        remote.backupHash = hash;
+      if (await this.writeExport(state, remote, files)) {
+        const root = files.filter((f) => kindOf(f) === "root").sort(oldestFirst)[0];
+        await this.prune(await this.versionList(files, remote.exportFileId), policyFrom(root?.appProperties));
       }
       remote.publishedRev = state.rev;
     } catch (e) {
@@ -511,6 +500,30 @@ export class SyncEngine {
     await this.kv.set(this.remoteKey, remote);
   }
 
+  /** Uploads the data to dulieu.txt as a new version, unless the listed dulieu.txt already holds it. True when uploaded. */
+  private async writeExport(state: AccountState, remote: RemoteState, files: DriveFile[]): Promise<boolean> {
+    const text = exportText(state.items);
+    const hash = await sha256(text);
+    const exp = files.find((f) => kindOf(f) === "export" && f.id === remote.exportFileId);
+    const uploaded = exp?.appProperties?.hash !== hash;
+    if (uploaded) {
+      const c = counts(state.items);
+      remote.exportFileId = await this.upsert(
+        remote.exportFileId,
+        text,
+        "text/plain",
+        {
+          name: EXPORT_NAME,
+          parents: [await this.ensureFolder(remote)],
+          appProperties: { stvSync: "export", hash },
+          originalFilename: revisionName(this.device.name.slice(0, 60), c.books, c.names),
+        },
+        { keepForever: true },
+      );
+    }
+    remote.exportHash = hash;
+    return uploaded;
+  }
   /** What Drive holds for this account, without changing anything. */
   async summary(): Promise<RemoteSummary> {
     const files = await this.drive.list(`trashed=false and (${TAGGED})`);
@@ -560,17 +573,31 @@ export class SyncEngine {
 
   /** The policy and every version, newest first. */
   async backups(): Promise<{ policy: BackupPolicy; versions: BackupVersion[] }> {
-    const files = await this.drive.list(`trashed=false and (${tag("root")} or ${tag("backup")})`);
-    const root = files.filter((f) => kindOf(f) === "root").sort(oldestFirst)[0];
-    const versions = files.filter((f) => kindOf(f) === "backup").map(versionFrom).sort(byNewest);
-    return { policy: policyFrom(root?.appProperties), versions };
+    const files = (await this.drive.list(VERSIONS_LIST)).sort(oldestFirst);
+    const root = files.find((f) => kindOf(f) === "root");
+    const exp = files.find((f) => kindOf(f) === "export");
+    return { policy: policyFrom(root?.appProperties), versions: await this.versionList(files, exp?.id) };
   }
 
-  private async backupMeta(hash: string, items: Items, remote: RemoteState, reason: BackupReason): Promise<FileMeta> {
+  /** The backup files in `files`, and dulieu.txt's revisions kept forever. */
+  private async versionList(files: DriveFile[], exportId: string | undefined): Promise<BackupVersion[]> {
+    const out = files.filter((f) => kindOf(f) === "backup").map(versionFrom);
+    if (exportId) {
+      try {
+        const revisions = await this.drive.revisions(exportId);
+        const head = revisions.at(-1)?.id;
+        out.push(...revisions.filter((r) => r.keepForever).map((r) => versionFromRevision(exportId, r, r.id === head)));
+      } catch (e) {
+        if (!isNotFound(e)) throw e;
+      }
+    }
+    return out.sort(byNewest);
+  }
+
+  private async backupMeta(items: Items, remote: RemoteState, reason: BackupReason): Promise<FileMeta> {
     const at = this.now();
     const c = counts(items);
     const day = dayOf(at);
-    if (reason !== "join") remote.backupHash = hash;
     return {
       name: `backup ${day} ${new Date(at).toTimeString().slice(0, 8).replaceAll(":", "")}.txt`,
       parents: [await this.ensureFolder(remote)],
@@ -581,14 +608,9 @@ export class SyncEngine {
         deviceName: this.device.name.slice(0, 60),
         books: String(c.books),
         names: String(c.names),
-        hash,
         reason,
       },
     };
-  }
-
-  private async writeBackup(text: string, hash: string, items: Items, remote: RemoteState, reason: BackupReason): Promise<BackupVersion> {
-    return versionFrom(await this.drive.create(await this.backupMeta(hash, items, remote, reason), text, "text/plain"));
   }
 
   /**
@@ -600,9 +622,8 @@ export class SyncEngine {
     const own = liveItems(page).values;
     if (![...own].some(([k, v]) => items[k]?.v !== v)) return true;
     try {
-      const text = JSON.stringify(toExport(page));
       const pageItems: Items = Object.fromEntries([...own].map(([k, v]) => [k, { t: 0, v }]));
-      await this.writeBackup(text, await sha256(text), pageItems, remote, "join");
+      await this.drive.create(await this.backupMeta(pageItems, remote, "join"), JSON.stringify(toExport(page)), "text/plain");
       return true;
     } catch (e) {
       console.warn("Could not save this browser's data before joining.", e);
@@ -611,9 +632,14 @@ export class SyncEngine {
   }
 
   private async prune(versions: BackupVersion[], policy: BackupPolicy, keep?: string): Promise<void> {
-    const gone = toPrune(versions, policy).filter((v) => v.id !== keep);
+    const gone = toPrune(versions, policy).filter((v) => v.id !== keep && !v.current);
     // Another browser may have pruned the same version already.
-    await Promise.all(gone.map((v) => this.removeIfThere(v.id)));
+    await Promise.all(gone.map((v) => this.removeVersion(v.id).catch((e) => (isNotFound(e) ? undefined : Promise.reject(e)))));
+  }
+
+  private removeVersion(id: string): Promise<void> {
+    const rev = parseRevisionId(id);
+    return rev ? this.drive.removeRevision(rev.fileId, rev.revId) : this.drive.remove(id);
   }
 
   private async removeIfThere(id: string): Promise<void> {
@@ -624,16 +650,19 @@ export class SyncEngine {
     }
   }
 
-  /** Saves a version now; skipped when the newest one already holds the same data. */
+  /** The files a backup action needs; the remote state learns dulieu.txt's id from them. */
+  private async versionFiles(remote: RemoteState): Promise<{ files: DriveFile[]; policy: BackupPolicy }> {
+    const files = (await this.drive.list(VERSIONS_LIST)).sort(oldestFirst);
+    remote.exportFileId ??= files.find((f) => kindOf(f) === "export")?.id;
+    return { files, policy: policyFrom(files.find((f) => kindOf(f) === "root")?.appProperties) };
+  }
+
+  /** Saves the current data as a version now; skipped when dulieu.txt already holds it. */
   async backupNow(): Promise<void> {
     const [state, remote] = await this.load();
-    const text = exportText(state.items);
-    const hash = await sha256(text);
-    const { policy, versions } = await this.backups();
-    if (latest(versions)?.hash === hash) return;
-    const v = await this.writeBackup(text, hash, state.items, remote, "manual");
-    await this.prune([v, ...versions], policy);
-    await this.updateCache((r) => Object.assign(r, { backupHash: remote.backupHash, folderId: remote.folderId }));
+    const { files, policy } = await this.versionFiles(remote);
+    if (await this.writeExport(state, remote, files)) await this.prune(await this.versionList(files, remote.exportFileId), policy);
+    await this.updateCache((r) => Object.assign(r, { exportHash: remote.exportHash, exportFileId: remote.exportFileId, folderId: remote.folderId }));
   }
 
   async setBackupPolicy(p: Partial<BackupPolicy>): Promise<BackupPolicy> {
@@ -646,12 +675,14 @@ export class SyncEngine {
     return policy;
   }
 
+  /** Deletes a version; dulieu.txt's current one cannot be. */
   async deleteBackup(id: string): Promise<void> {
-    await this.drive.remove(id);
+    await this.removeVersion(id);
   }
 
   async downloadBackup(id: string): Promise<string> {
-    return this.drive.download(id);
+    const rev = parseRevisionId(id);
+    return rev ? this.drive.downloadRevision(rev.fileId, rev.revId) : this.drive.download(id);
   }
 
   /**
@@ -660,22 +691,21 @@ export class SyncEngine {
    * Open pages get it at their next sync.
    */
   async restoreBackup(id: string): Promise<void> {
-    const file = JSON.parse(await this.drive.download(id)) as Partial<ExportFile>;
+    const file = JSON.parse(await this.downloadBackup(id)) as Partial<ExportFile>;
     if (!file || typeof file !== "object" || typeof file.name !== "object") throw new Error("That file is not a backup version.");
     const [state, remote] = await this.load();
-    const { policy, versions } = await this.backups();
-    const text = exportText(state.items);
-    const hash = await sha256(text);
-    const saved = latest(versions)?.hash === hash ? [] : [await this.writeBackup(text, hash, state.items, remote, "restore")];
+    const { files, policy } = await this.versionFiles(remote);
+    await this.writeExport(state, remote, files); // the data being replaced stays as a version
     replaceWith(state.items, fromExport({ name: file.name, tusach: file.tusach }), this.now());
     resolveTerms(state.items);
     state.rev++;
     await this.kv.set(this.stateKey, state);
     await this.push(state, remote, true);
+    await this.writeExport(state, remote, []);
+    remote.publishedRev = state.rev;
     await this.kv.set(this.remoteKey, remote);
-    await this.prune([...saved, ...versions], policy, id); // never the version just restored
+    await this.prune(await this.versionList(files, remote.exportFileId), policy, id); // never the version just restored
   }
-
   async exportText(): Promise<string> {
     const [state] = await this.load();
     return exportText(state.items);

@@ -29,7 +29,7 @@ service worker      background.js
                       2. merge other browsers' changes from Drive
                       3. upload a change file holding only what changed here
                       4. write the merged result back into the page if it did not change meanwhile
-                      5. then update dulieu.txt and copy it as a backup version
+                      5. then update dulieu.txt; Drive keeps each upload as a version of it
 ```
 
 - **Merge model:** a last-writer-wins element set (CRDT). Items are one book in the history, or one name line. Each item records when it last changed, and deleted items are kept as tombstones for 180 days. So merging is order-independent and never loses a newer change.
@@ -37,7 +37,7 @@ service worker      background.js
   - `changes-<id>-<n>.json`: one per sync with changes, holding only the changed items (a chapter read is a few hundred bytes). Other browsers download only the ones they haven't merged.
   - `device-<id>.json`: all the data as of change *n*. Every 30 changes the change files are folded into it and deleted. A browser further behind than the change files reach reads this file instead.
   - Browsers on an older version of the extension still sync: they read and write the whole device file as before.
-- **dulieu.txt and backups** are written after the page is updated, so they don't delay the sync. A browser that only received changes writes neither. A backup version is a server-side copy of dulieu.txt, so the data is uploaded once per change.
+- **dulieu.txt and backups** are written after the page is updated, so they don't delay the sync. A browser that only received changes writes neither. Backup versions are dulieu.txt's own Drive revisions, uploaded with "keep forever", so the data goes up once per change. Drive's **Manage versions** on dulieu.txt shows them too, each named after the browser and what it holds.
 - **One translation per term.** The site uses one line per name term (`$伊莱=…`), so a list keeps one line per term, the newest change. That covers the site appending a renamed name and two browsers renaming the same term.
 - **A browser joining** (first sync, or a page whose site data was cleared) is merged against the account's data and deletes nothing:
   - Books only one side has, and names only one side has, end up on both.
@@ -83,10 +83,12 @@ Settings: domains (adding one asks for access to it), the OAuth client ID, and *
 - **Rename** it. Another browser takes the new name at its next sync.
 - **Remove** it. Its file goes to the Drive trash, and anything it already synced stays. That browser stops syncing with the account until it is linked again from its own popup. "Remove this browser" does the same for the current browser.
 
-**Backups** keeps versions of the account's data in its Drive (`SangTacViet Sync/backup …txt`, site format). The card shows the policy; click it to manage versions:
+**Backups** keeps versions of the account's data in its Drive, as the version history of `SangTacViet Sync/dulieu.txt` (site format), like a Google Doc's. The card shows the policy; click it to manage versions:
 
-- Every sync that changes the data saves a version. Each day keeps its newest **versions per day** (default 2). **Saved days to keep** (default 7) counts only days that have versions: days with nothing saved are skipped, so 7 saved days keep up to 14 versions however far apart they are. The policy is stored on the Drive folder, so all browsers on the account share it.
-- Pick a version to **Restore** it, **Download** it as `.txt`, or **Delete** it. Restore replaces the data in every browser on the account, and saves the current data as a version first.
+- Every sync that changes the data saves a version. Each day keeps its newest **versions per day** (default 2). **Saved days to keep** (default 7) counts only days that have versions: days with nothing saved are skipped, so 7 saved days keep up to 14 versions however far apart they are. At most 180 versions in all, since Drive keeps up to 200 per file forever. The policy is stored on the Drive folder, so all browsers on the account share it.
+- Pick a version to **Restore** it, **Download** it as `.txt`, or **Delete** it. Restore replaces the data in every browser on the account; the data it replaces stays as a version. The current version is dulieu.txt itself and can't be deleted.
+- A joining browser's own data, and versions saved by older versions of the extension, are separate `backup …txt` files in the folder. They are listed and rotated the same way.
+- Deleting dulieu.txt from Drive deletes its versions with it.
 - The list refreshes on its own.
 
 ## Development

@@ -1,19 +1,26 @@
 /**
  * In-memory stand-in for the Drive v3 endpoints src/shared/drive.ts uses:
  * list (appProperties filters only), download, get, metadata patch (rename,
- * trash), folder create, multipart create, media update, copy, delete. Every account sees the
- * same files; tokens are not checked beyond being present. CORS is open so an extension service worker can call it.
+ * trash), folder create, multipart create, media update, delete, and revisions
+ * (list, download, delete; keepRevisionForever, Drive's limit of 200 kept). Every account
+ * sees the same files; tokens are not checked beyond being present. CORS is open so an
+ * extension service worker can call it.
  *
  *   bun run test/fake-drive.ts [port] [--file state.json]   # standalone, for browser probes
  *
  * Standalone extras: GET /__files (every file with its content), POST /__reset.
  * With --file, files survive restarts, so probe steps run as separate processes can share them.
  */
-import type { DriveFile } from "../src/shared/drive";
+import type { DriveFile, FileMeta, Revision } from "../src/shared/drive";
+
+interface StoredRevision extends Revision {
+  content: string;
+}
 
 interface Stored extends DriveFile {
   content: string;
   trashed: boolean;
+  revisions?: StoredRevision[];
 }
 
 const CORS = {
@@ -25,6 +32,8 @@ const CORS = {
 export class FakeDrive {
   readonly files = new Map<string, Stored>();
   readonly log: string[] = [];
+  /** Server time; tests point it at their clock. */
+  now: () => number = Date.now;
   private seq = 0;
   private server?: ReturnType<typeof Bun.serve>;
 
@@ -69,8 +78,27 @@ export class FakeDrive {
   }
 
   private stamp(f: Stored): void {
-    f.modifiedTime = new Date(Date.now() + this.seq).toISOString();
+    f.modifiedTime = new Date(this.now() + this.seq).toISOString();
     f.md5Checksum = String(Bun.hash(f.content));
+  }
+
+  private keptFull(f: Stored | undefined, keep: boolean): Response | undefined {
+    if (keep && (f?.revisions ?? []).filter((r) => r.keepForever).length >= 200)
+      return this.json({ error: { message: "The maximum number of revisions kept forever was reached." } }, 403);
+  }
+
+  /** New content: a new head revision. */
+  private revise(f: Stored, meta: Partial<FileMeta>, keep: boolean): void {
+    const r: StoredRevision = {
+      id: `r${++this.seq}`,
+      modifiedTime: f.modifiedTime,
+      keepForever: keep,
+      md5Checksum: f.md5Checksum,
+      size: String(new TextEncoder().encode(f.content).length),
+      originalFilename: meta.originalFilename ?? meta.name ?? f.name,
+      content: f.content,
+    };
+    f.revisions = [...(f.revisions ?? []), r];
   }
 
   private add(meta: Partial<DriveFile>, content: string): Stored {
@@ -94,7 +122,7 @@ export class FakeDrive {
   }
 
   private meta(f: Stored): DriveFile {
-    const { content: _c, trashed: _t, ...m } = f;
+    const { content: _c, trashed: _t, revisions: _r, ...m } = f;
     return m;
   }
 
@@ -108,9 +136,9 @@ export class FakeDrive {
       return this.json({ ok: true });
     }
     if (!req.headers.get("Authorization")?.startsWith("Bearer ")) return this.json({ error: { message: "no token" } }, 401);
-    const m = /^\/(upload\/)?drive\/v3\/files(?:\/([^/]+))?(\/copy)?$/.exec(url.pathname);
+    const m = /^\/(upload\/)?drive\/v3\/files(?:\/([^/]+))?(\/revisions(?:\/([^/]+))?)?$/.exec(url.pathname);
     if (!m) return this.json({ error: { message: "not found" } }, 404);
-    const [, upload, id, copy] = m;
+    const [, upload, id, revisions, revId] = m;
 
     if (req.method === "GET" && !id) {
       const q = url.searchParams.get("q") ?? "";
@@ -126,14 +154,27 @@ export class FakeDrive {
     }
     const f = id ? this.files.get(id) : undefined;
     if (id && !f) return this.json({ error: { message: "File not found" } }, 404);
+    if (revisions && f) {
+      const list = f.revisions ?? [];
+      if (!revId && req.method === "GET") return this.json({ revisions: list.map(({ content: _c, ...r }) => r) });
+      const r = list.find((x) => x.id === revId);
+      if (!r) return this.json({ error: { message: "Revision not found" } }, 404);
+      if (req.method === "GET" && url.searchParams.get("alt") === "media") {
+        if (!r.keepForever) return this.json({ error: { message: "Only revisions kept forever can be downloaded." } }, 403);
+        return new Response(r.content, { headers: { ...CORS, "Content-Type": "text/plain; charset=utf-8" } });
+      }
+      if (req.method === "DELETE") {
+        if (r === list.at(-1)) return this.json({ error: { message: "The current revision cannot be deleted." } }, 400);
+        f.revisions = list.filter((x) => x !== r);
+        return new Response(null, { status: 204, headers: CORS });
+      }
+      return this.json({ error: { message: "unsupported" } }, 400);
+    }
     if (req.method === "GET" && f && url.searchParams.get("alt") !== "media") return this.json({ ...this.meta(f), trashed: f.trashed });
     if (req.method === "GET" && f) {
       return new Response(f.content, { headers: { ...CORS, "Content-Type": "text/plain; charset=utf-8" } });
     }
-    if (req.method === "POST" && copy && f) {
-      const meta = (await req.json()) as DriveFile;
-      return this.json(this.meta(this.add({ ...meta, appProperties: { ...f.appProperties, ...meta.appProperties } }, f.content)));
-    }
+
     if (req.method === "DELETE" && f) {
       this.files.delete(f.id);
       return new Response(null, { status: 204, headers: CORS });
@@ -150,11 +191,19 @@ export class FakeDrive {
       const boundary = /boundary=(.+)$/.exec(req.headers.get("Content-Type") ?? "")?.[1];
       const parts = (await req.text()).split(`--${boundary}`);
       const body = (p: string) => p.slice(p.indexOf("\r\n\r\n") + 4).replace(/\r\n$/, "");
-      const meta = JSON.parse(body(parts[1]!)) as DriveFile;
-      if (!f) return this.json(this.meta(this.add(meta, body(parts[2]!))));
+      const meta = JSON.parse(body(parts[1]!)) as DriveFile & FileMeta;
+      const keep = url.searchParams.get("keepRevisionForever") === "true";
+      if (!f) {
+        const created = this.add(meta, body(parts[2]!));
+        this.revise(created, meta, keep);
+        return this.json(this.meta(created));
+      }
+      const full = this.keptFull(f, keep);
+      if (full) return full;
       f.content = body(parts[2]!);
       if (meta.appProperties) f.appProperties = { ...f.appProperties, ...meta.appProperties };
       this.stamp(f);
+      this.revise(f, meta, keep);
       return this.json(this.meta(f));
     }
     return this.json({ error: { message: "unsupported" } }, 400);

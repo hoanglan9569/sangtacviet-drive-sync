@@ -70,7 +70,7 @@
           <label class="inline" title="Only days that have versions count; days with nothing saved are skipped.">Saved days to keep <input id="days" type="number" min="1" max="365" required /></label>
           <button class="primary" id="policy-save">Save</button>
         </form>
-        <p class="muted small">Every sync that changes your data saves a version. Each day keeps its newest versions, and the most recent saved days are kept. Days with nothing saved don't count, however long ago.</p>
+        <p class="muted small">Every sync that changes your data saves a version of <code>dulieu.txt</code>, in its Google Drive version history. Each day keeps its newest versions, and the most recent saved days are kept. Days with nothing saved don't count, however long ago. At most <span id="max-versions">180</span> versions in all: Drive keeps up to 200 per file.</p>
         <div id="versions" class="versions" role="radiogroup" aria-label="Versions"></div>
         <p class="error small" id="backups-error"></p>
         <div class="row">

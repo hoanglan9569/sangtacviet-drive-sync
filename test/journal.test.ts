@@ -10,6 +10,7 @@ beforeEach(() => {
   drive.files.clear();
   drive.log.length = 0;
   clock = new Clock();
+  drive.now = clock.now;
 });
 
 const N = "qidian100";
@@ -54,10 +55,10 @@ test("a small change uploads a change file, not the whole data; the other browse
   const [change] = drive.byKind("ops");
   expect(change!.content.length).toBeLessThan(500);
   expect(Object.keys(JSON.parse(change!.content).items)).toEqual(["t\u001fqidian-7"]);
-  // list and the change file, then dulieu.txt, its copy as a backup version, and the rotation
+  // list and the change file, then dulieu.txt (a new version of it) and the rotation of its versions
   const sent = requests();
-  expect(sent.slice(0, 4)).toEqual(["GET list", "POST upload", "PATCH export", "POST export"]);
-  expect(sent.slice(4).every((r) => r === "DELETE gone")).toBe(true);
+  expect(sent.slice(0, 4)).toEqual(["GET list", "POST upload", "PATCH export", "GET export"]);
+  expect(sent.slice(4).every((r) => r === "DELETE export")).toBe(true);
 
   clock.tick();
   await b.engine.sync(pb, pb.times);
@@ -66,15 +67,15 @@ test("a small change uploads a change file, not the whole data; the other browse
   expect(requests()).toEqual(["GET list", "GET ops"]);
 });
 
-test("a backup version is a server-side copy of dulieu.txt", async () => {
+test("a backup version is a revision of dulieu.txt, kept forever: the data goes up once", async () => {
   const { a, pa } = await twoBrowsers(3);
   clock.tick();
   pa.read_("qidian", "1", 9);
   await a.engine.sync(pa, pa.times);
-  expect(drive.log.filter((l) => l.endsWith("/copy"))).toHaveLength(1);
+  expect(drive.log.filter((l) => l.startsWith("POST /upload") || l.startsWith("PATCH /upload"))).toHaveLength(2); // change file, dulieu.txt
   const [exp] = drive.byKind("export");
+  expect(exp!.revisions!.at(-1)!.keepForever).toBe(true);
   const { versions } = await a.engine.backups();
-  expect(versions[0]!.hash).toBe(exp!.appProperties!.hash!);
   expect(await a.engine.downloadBackup(versions[0]!.id)).toBe(exp!.content);
 });
 

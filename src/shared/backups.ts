@@ -1,10 +1,11 @@
 /**
- * Backup versions: copies of the account's merged data in the site's export
- * format, kept on Drive next to the device files (stvSync = backup). The
- * policy (versions per day, saved days kept) lives on the sync folder, so every
- * browser on the account follows the same one.
+ * Backup versions: dulieu.txt's own revisions in Drive (its version history),
+ * one per change, kept forever until the policy drops them. A joining browser's
+ * own data, and versions from before this, are separate files (stvSync = backup).
+ * The policy (versions per day, saved days kept) lives on the sync folder, so
+ * every browser on the account follows the same one.
  */
-import type { DriveFile } from "./drive";
+import type { DriveFile, Revision } from "./drive";
 
 export interface BackupPolicy {
   /** Newest versions kept per day. */
@@ -15,20 +16,27 @@ export interface BackupPolicy {
 
 export const DEFAULT_POLICY: BackupPolicy = { perDay: 2, days: 7 };
 export const POLICY_LIMITS: Record<keyof BackupPolicy, [min: number, max: number]> = { perDay: [1, 24], days: [1, 365] };
+/** Drive keeps at most 200 revisions of a file forever; this leaves room for the next upload. */
+export const MAX_VERSIONS = 180;
 /** "join": a browser's own data from before it joined the account, where the account's data won. */
 export type BackupReason = "auto" | "manual" | "restore" | "join";
 
 export interface BackupVersion {
+  /** A file id, or `rev:<file id>:<revision id>` for a revision of dulieu.txt. */
   id: string;
   /** When it was saved (ms). */
   at: number;
   /** Local day it belongs to, YYYY-MM-DD. */
   day: string;
   deviceName: string;
-  books: number;
-  names: number;
-  hash: string;
+  /** Unknown (undefined) when Drive did not keep the revision's file name. */
+  books?: number;
+  names?: number;
+  /** Bytes. */
+  size?: number;
   reason: BackupReason;
+  /** dulieu.txt's current content: Drive does not delete that one. */
+  current?: boolean;
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -44,7 +52,8 @@ export function clampPolicy(p: Partial<BackupPolicy>): BackupPolicy {
     const n = Math.round(Number(p[k]));
     return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : DEFAULT_POLICY[k];
   };
-  return { perDay: one("perDay"), days: one("days") };
+  const perDay = one("perDay");
+  return { perDay, days: Math.min(one("days"), Math.floor(MAX_VERSIONS / perDay)) };
 }
 
 /** The policy stored on the sync folder's appProperties. */
@@ -64,8 +73,34 @@ export function versionFrom(f: DriveFile): BackupVersion {
     deviceName: a.deviceName ?? "",
     books: Number(a.books) || 0,
     names: Number(a.names) || 0,
-    hash: a.hash ?? "",
     reason: a.reason === "manual" || a.reason === "restore" || a.reason === "join" ? a.reason : "auto",
+  };
+}
+
+/** The file name a revision is uploaded with: it carries what the version holds, also for Drive's own version list. */
+export const revisionName = (deviceName: string, books: number, names: number) => `dulieu - ${deviceName} - ${books} books, ${names} names.txt`;
+
+export const revisionId = (fileId: string, revId: string) => `rev:${fileId}:${revId}`;
+
+/** The file and revision a version id names, if it is a revision. */
+export function parseRevisionId(id: string): { fileId: string; revId: string } | undefined {
+  const m = /^rev:([^:]+):(.+)$/.exec(id);
+  return m ? { fileId: m[1]!, revId: m[2]! } : undefined;
+}
+
+export function versionFromRevision(fileId: string, r: Revision, current: boolean): BackupVersion {
+  const at = Date.parse(r.modifiedTime ?? "") || 0;
+  const m = /^dulieu - (.*) - (\d+) books, (\d+) names\.txt$/.exec(r.originalFilename ?? "");
+  return {
+    id: revisionId(fileId, r.id),
+    at,
+    day: dayOf(at),
+    deviceName: m?.[1] ?? "",
+    books: m ? Number(m[2]) : undefined,
+    names: m ? Number(m[3]) : undefined,
+    size: r.size === undefined ? undefined : Number(r.size),
+    reason: "auto",
+    current,
   };
 }
 

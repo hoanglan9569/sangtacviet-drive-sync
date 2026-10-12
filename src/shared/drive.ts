@@ -1,7 +1,8 @@
 /**
  * The few Google Drive v3 calls the sync needs. The `drive.file` scope only
  * shows files this app created, so files are found by their appProperties
- * (stvSync = root | device | ops | export | backup), never by name.
+ * (stvSync = root | device | ops | export | backup), never by name. Backup versions are
+ * dulieu.txt's own revisions, kept forever.
  */
 
 export const DRIVE_BASE = "https://www.googleapis.com";
@@ -19,6 +20,17 @@ export interface DriveFile {
   appProperties?: Record<string, string>;
 }
 
+/** One version of a file's content. Only revisions kept forever can be downloaded. */
+export interface Revision {
+  id: string;
+  modifiedTime?: string;
+  keepForever?: boolean;
+  md5Checksum?: string;
+  size?: string;
+  originalFilename?: string;
+}
+const REVISION_FIELDS = "id,modifiedTime,keepForever,md5Checksum,size,originalFilename";
+
 /** A Drive query string literal: 'it\'s'. */
 export const quote = (s: string) => `'${s.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 
@@ -27,6 +39,13 @@ export interface FileMeta {
   mimeType?: string;
   parents?: string[];
   appProperties?: Record<string, string>;
+  /** Recorded on the revision the upload creates (Drive's "Manage versions" shows it). */
+  originalFilename?: string;
+}
+
+export interface UploadOptions {
+  /** Keep the revision this upload creates (otherwise Drive drops it 30 days after a newer one). */
+  keepForever?: boolean;
 }
 
 export class DriveError extends Error {
@@ -123,12 +142,13 @@ export class Drive {
     return res.json() as Promise<DriveFile>;
   }
 
-  private async multipart(method: string, path: string, meta: object, content: string, contentType: string): Promise<DriveFile> {
+  private async multipart(method: string, path: string, meta: object, content: string, contentType: string, opts: UploadOptions = {}): Promise<DriveFile> {
     const boundary = `stv${crypto.randomUUID().replaceAll("-", "")}`;
     const body =
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n` +
       `--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n${content}\r\n--${boundary}--`;
-    const res = await this.call(`${path}?uploadType=multipart&fields=${FIELDS}`, {
+    const keep = opts.keepForever ? "&keepRevisionForever=true" : "";
+    const res = await this.call(`${path}?uploadType=multipart&fields=${FIELDS}${keep}`, {
       method,
       headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
       body,
@@ -136,22 +156,36 @@ export class Drive {
     return res.json() as Promise<DriveFile>;
   }
 
-  create(meta: FileMeta, content: string, contentType: string): Promise<DriveFile> {
-    return this.multipart("POST", "/upload/drive/v3/files", meta, content, contentType);
+  create(meta: FileMeta, content: string, contentType: string, opts?: UploadOptions): Promise<DriveFile> {
+    return this.multipart("POST", "/upload/drive/v3/files", meta, content, contentType, opts);
   }
 
-  /** A server-side copy: nothing is uploaded. `meta.appProperties` are merged into the source's. */
-  async copy(id: string, meta: FileMeta): Promise<DriveFile> {
-    const res = await this.call(`/drive/v3/files/${encodeURIComponent(id)}/copy?fields=${FIELDS}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json; charset=UTF-8" },
-      body: JSON.stringify(meta),
-    });
-    return res.json() as Promise<DriveFile>;
+  /** Replaces the content; `meta.appProperties` (if given) are merged into the file's. */
+  update(id: string, content: string, contentType: string, meta: Partial<FileMeta> = {}, opts?: UploadOptions): Promise<DriveFile> {
+    const { parents: _p, ...rest } = meta;
+    return this.multipart("PATCH", `/upload/drive/v3/files/${encodeURIComponent(id)}`, rest, content, contentType, opts);
   }
 
-  /** Replaces the content; `appProperties` (if given) are merged into the file's. */
-  update(id: string, content: string, contentType: string, appProperties?: Record<string, string>): Promise<DriveFile> {
-    return this.multipart("PATCH", `/upload/drive/v3/files/${encodeURIComponent(id)}`, appProperties ? { appProperties } : {}, content, contentType);
+  /** The file's revisions, oldest first; the last one is the current content. */
+  async revisions(fileId: string): Promise<Revision[]> {
+    const out: Revision[] = [];
+    let pageToken = "";
+    do {
+      const p = new URLSearchParams({ pageSize: "1000", fields: `nextPageToken,revisions(${REVISION_FIELDS})` });
+      if (pageToken) p.set("pageToken", pageToken);
+      const body = (await (await this.call(`/drive/v3/files/${encodeURIComponent(fileId)}/revisions?${p}`)).json()) as { revisions?: Revision[]; nextPageToken?: string };
+      out.push(...(body.revisions ?? []));
+      pageToken = body.nextPageToken ?? "";
+    } while (pageToken);
+    return out;
+  }
+
+  async downloadRevision(fileId: string, revisionId: string): Promise<string> {
+    return (await this.call(`/drive/v3/files/${encodeURIComponent(fileId)}/revisions/${encodeURIComponent(revisionId)}?alt=media`)).text();
+  }
+
+  /** Deletes a revision for good; Drive refuses the current one. */
+  async removeRevision(fileId: string, revisionId: string): Promise<void> {
+    await this.call(`/drive/v3/files/${encodeURIComponent(fileId)}/revisions/${encodeURIComponent(revisionId)}`, { method: "DELETE" });
   }
 }

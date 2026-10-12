@@ -1,9 +1,10 @@
 /**
  * Settings page "Backups": a one-line card; a click opens a dialog with the
- * policy (versions per day, saved days kept) and the versions, where one can be
- * picked to restore, download or delete. Both stay current on their own.
+ * policy (versions per day, saved days kept) and the versions (dulieu.txt's
+ * version history), where one can be picked to restore, download or delete.
+ * Both stay current on their own.
  */
-import type { BackupPolicy, BackupVersion } from "../shared/backups";
+import { type BackupPolicy, type BackupVersion, MAX_VERSIONS } from "../shared/backups";
 import type { Status } from "../shared/messages";
 import { ago, busy, call, h } from "./common";
 
@@ -21,6 +22,13 @@ let editing = false;
 
 const account = () => status?.accounts.find((a) => a.sub === status?.active);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** "12 books · 340 names", or the size when Drive did not keep the counts. */
+const what = (v: BackupVersion) =>
+  v.books !== undefined && v.names !== undefined
+    ? `${plural(v.books, "book")} · ${plural(v.names, "name")}`
+    : v.size !== undefined
+      ? `${Math.max(1, Math.round(v.size / 1024))} KB`
+      : "";
 const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 function dayLabel(day: string): string {
@@ -90,7 +98,8 @@ function render(): void {
             "small",
             { class: "muted" },
             [
-              `${plural(v.books, "book")} · ${plural(v.names, "name")}`,
+              v.current ? "current" : "",
+              what(v),
               v.deviceName,
               v.reason === "manual" ? "saved by hand" : v.reason === "restore" ? "saved before a restore" : v.reason === "join" ? "its own data before joining" : "",
             ]
@@ -103,6 +112,9 @@ function render(): void {
   );
   const none = !selected;
   for (const id of ["version-download", "version-delete", "version-restore"]) $<HTMLButtonElement>(id).disabled = none;
+  const current = !!chosen()?.current;
+  $<HTMLButtonElement>("version-delete").disabled = none || current;
+  $<HTMLButtonElement>("version-delete").title = current ? "This is dulieu.txt's current content; it goes once newer versions replace it." : "";
   $<HTMLButtonElement>("version-restore").disabled = none || !a?.linked;
   $<HTMLButtonElement>("backup-now").disabled = !a?.linked;
   $<HTMLButtonElement>("policy-save").disabled = !a;
@@ -129,6 +141,7 @@ $("backups-card").addEventListener("keydown", (e) => (e.key === "Enter" || e.key
 $("backups-close").addEventListener("click", () => dialog.close());
 dialog.addEventListener("click", (e) => e.target === dialog && dialog.close());
 for (const input of [perDay, days]) input.addEventListener("input", () => (editing = true));
+$("max-versions").textContent = String(MAX_VERSIONS);
 
 $("policy-form").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -174,7 +187,7 @@ $("version-restore").addEventListener("click", (e) => {
   const v = chosen();
   if (!v) return;
   const question =
-    `Restore the version from ${when(v)} (${plural(v.books, "book")}, ${plural(v.names, "name")})?\n\n` +
+    `Restore the version from ${when(v)}${what(v) ? ` (${what(v).replace(" · ", ", ")})` : ""}?\n\n` +
     "Reading history and names in every browser on this account are replaced by it. The current data is saved as a version first.";
   if (!confirm(question)) return;
   void busy(e.currentTarget as HTMLButtonElement, "Restoring…", async () => {
