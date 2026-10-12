@@ -18,7 +18,8 @@ export const POLICY_LIMITS: Record<keyof BackupPolicy, [min: number, max: number
 /** While the data keeps changing, a new version is saved at most this often. */
 export const BACKUP_GAP = 3600 * 1000;
 
-export type BackupReason = "auto" | "manual" | "restore";
+/** "join": a browser's own data from before it joined the account, where the account's data won. */
+export type BackupReason = "auto" | "manual" | "restore" | "join";
 
 export interface BackupVersion {
   id: string;
@@ -67,7 +68,7 @@ export function versionFrom(f: DriveFile): BackupVersion {
     books: Number(a.books) || 0,
     names: Number(a.names) || 0,
     hash: a.hash ?? "",
-    reason: a.reason === "manual" || a.reason === "restore" ? a.reason : "auto",
+    reason: a.reason === "manual" || a.reason === "restore" || a.reason === "join" ? a.reason : "auto",
   };
 }
 
@@ -76,7 +77,8 @@ export const byNewest = (a: BackupVersion, b: BackupVersion) => b.at - a.at;
 
 /**
  * The versions the policy drops: each day keeps its `perDay` newest, and days
- * before the last `days` go. The newest version is always kept, so a browser
+ * before the last `days` go. "join" versions do not count toward a day's versions:
+ * they only go with their day. The newest version is always kept, so a browser
  * with a wrong clock cannot wipe every backup.
  */
 export function toPrune(versions: BackupVersion[], policy: BackupPolicy, now: number): BackupVersion[] {
@@ -84,8 +86,8 @@ export function toPrune(versions: BackupVersion[], policy: BackupPolicy, now: nu
   const cutoff = dayOf(now - (policy.days - 1) * 86_400_000);
   const perDay = new Map<string, number>();
   return sorted.filter((v, i) => {
-    const n = (perDay.get(v.day) ?? 0) + 1;
-    perDay.set(v.day, n);
+    const n = v.reason === "join" ? 0 : (perDay.get(v.day) ?? 0) + 1;
+    if (n) perDay.set(v.day, n);
     return i > 0 && (v.day < cutoff || n > policy.perDay);
   });
 }

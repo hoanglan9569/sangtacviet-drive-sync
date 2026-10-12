@@ -23,8 +23,10 @@ import {
   dropTombstones,
   isEmptyPlan,
   mergeItems,
+  liveItems,
   planWrites,
   replaceWith,
+  resolveTerms,
 } from "./model";
 import { type ExportFile, type Snapshot, fromExport, toExport } from "./sitedata";
 import {
@@ -124,6 +126,9 @@ export interface RemoteSummary {
 const tag = (k: string) => `appProperties has { key='stvSync' and value='${k}' }`;
 const TAGGED = ["root", "device", "export"].map(tag).join(" or ");
 
+/** The newest version of the account's data (a "join" version holds one browser's own data). */
+const latest = (versions: BackupVersion[]) => versions.find((v) => v.reason !== "join");
+
 async function sha256(text: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -164,6 +169,7 @@ export class SyncEngine {
       device: this.device.name === name ? undefined : this.device,
     });
     let pushed = false;
+    let joinSaved = false;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const now = this.now();
       const read = replica ? await replica.read() : null;
@@ -171,8 +177,12 @@ export class SyncEngine {
       // first sync, so the empty page counts as nothing deleted and is filled back from Drive.
       const shadow = replica && read?.marked ? ((await this.kv.get<Snapshot>(this.shadowKey(replica.origin))) ?? null) : null;
       let changed = false;
+      // Joining (no shadow) merges against the account's data, so that is pulled first.
+      if (attempt === 0 && !shadow) changed = (await this.pull(state, remote)) || changed;
       if (read) changed = absorbLocal(state.items, read.snapshot, shadow, { now, times, stamp: read.stamp }) || changed;
-      if (attempt === 0) changed = (await this.pull(state, remote)) || changed;
+      if (attempt === 0 && shadow) changed = (await this.pull(state, remote)) || changed;
+      changed = resolveTerms(state.items) || changed;
+      if (read && !shadow && !joinSaved) joinSaved = await this.saveJoin(read.snapshot, state.items, remote);
       changed = dropTombstones(state.items, now - TOMBSTONE_TTL) || changed;
       if (changed) state.rev++;
       await this.kv.set(this.stateKey, state);
@@ -380,7 +390,7 @@ export class SyncEngine {
     if (hash === remote.backupHash || now - (remote.backupAt ?? 0) < BACKUP_GAP) return false;
     try {
       const { policy, versions } = await this.backups();
-      const newest = versions[0];
+      const newest = latest(versions);
       if (newest && (newest.hash === hash || now - newest.at < BACKUP_GAP)) {
         remote.backupHash = newest.hash;
         remote.backupAt = newest.at;
@@ -416,9 +426,30 @@ export class SyncEngine {
       text,
       "text/plain",
     );
-    remote.backupHash = hash;
-    remote.backupAt = at;
+    if (reason !== "join") {
+      remote.backupHash = hash;
+      remote.backupAt = at;
+    }
     return versionFrom(file);
+  }
+
+  /**
+   * When a joining page loses something to the account's data (a lower chapter, a name
+   * translated differently), saves the page's own data as a version first. True when done
+   * or not needed; a failure leaves it to the next attempt and never fails the sync.
+   */
+  private async saveJoin(page: Snapshot, items: Items, remote: RemoteState): Promise<boolean> {
+    const own = liveItems(page).values;
+    if (![...own].some(([k, v]) => items[k]?.v !== v)) return true;
+    try {
+      const text = JSON.stringify(toExport(page));
+      const pageItems: Items = Object.fromEntries([...own].map(([k, v]) => [k, { t: 0, v }]));
+      await this.writeBackup(text, await sha256(text), pageItems, remote, "join");
+      return true;
+    } catch (e) {
+      console.warn("Could not save this browser's data before joining.", e);
+      return false;
+    }
   }
 
   private async prune(versions: BackupVersion[], policy: BackupPolicy, keep?: string): Promise<void> {
@@ -431,7 +462,7 @@ export class SyncEngine {
     const text = exportText(state.items);
     const hash = await sha256(text);
     const { policy, versions } = await this.backups();
-    if (versions[0]?.hash === hash) return;
+    if (latest(versions)?.hash === hash) return;
     const v = await this.writeBackup(text, hash, state.items, remote, "manual");
     await this.prune([v, ...versions], policy);
     await this.updateCache((r) => Object.assign(r, { backupHash: remote.backupHash, backupAt: remote.backupAt, folderId: remote.folderId }));
@@ -467,8 +498,9 @@ export class SyncEngine {
     const { policy, versions } = await this.backups();
     const text = exportText(state.items);
     const hash = await sha256(text);
-    const saved = versions[0]?.hash === hash ? [] : [await this.writeBackup(text, hash, state.items, remote, "restore")];
+    const saved = latest(versions)?.hash === hash ? [] : [await this.writeBackup(text, hash, state.items, remote, "restore")];
     replaceWith(state.items, fromExport({ name: file.name, tusach: file.tusach }), this.now());
+    resolveTerms(state.items);
     state.rev++;
     await this.kv.set(this.stateKey, state);
     await this.push(state, remote);

@@ -106,11 +106,25 @@ export function absorbLocal(items: Items, local: Snapshot, shadow: Snapshot | nu
   const timeOf = (k: string) => Math.min(o.now, o.times?.[isEntryKey(k) ? "tusach" : splitLineKey(k)[0]] ?? o.now);
 
   if (!shadow) {
+    // Joining: `items` already hold the account's data (pulled first). Nothing local counts as deleted.
     const base = Math.min(o.now, o.stamp ?? o.now);
     const rank = new Map(L.order.map((k, i) => [k, i]));
+    // A later line of a name list is the newer one (the site appends edits), so it gets the later time.
+    const lineRank = new Map<string, number>();
+    for (const [nk, v] of Object.entries(local.names)) {
+      const lines = splitLines(v);
+      lines.forEach((line, i) => lineRank.set(lineKey(nk, line), lines.length - i));
+    }
+    const terms = liveTerms(items);
+    // A name the account already translates differently keeps the account's translation.
+    const clashes = (k: string) => {
+      const tk = termKey(k);
+      return tk !== null && (terms.get(tk) ?? []).some((other) => other !== k);
+    };
     for (const [k, v] of L.values) {
-      const t = base - (rank.get(k) ?? L.order.length);
+      const t = isEntryKey(k) ? base - (rank.get(k) ?? L.order.length) : base - L.order.length - (lineRank.get(k) ?? 0);
       const cur = items[k];
+      if (!isEntryKey(k) && cur?.v !== v && clashes(k)) continue;
       if (!cur) put(k, { t, v });
       // Never-synced browser: keep its data even if another browser deleted it.
       else if (cur.v === null) put(k, { t: Math.max(t, cur.t + 1), v });
@@ -272,4 +286,44 @@ export function replaceWith(items: Items, s: Snapshot, now: number): void {
   const rank = new Map(L.order.map((k, i) => [k, i]));
   for (const [k, it] of Object.entries(items)) if (it.v !== null && !L.values.has(k)) items[k] = { t: base, v: null };
   for (const [k, v] of L.values) items[k] = { t: base - (rank.get(k) ?? 0), v };
+}
+
+/**
+ * "<nameKey>\x1f<term>" of a name-line item: the part before the first "=",
+ * prefix included ("$伊莱", "@a|b", "#x"). The site applies one translation per
+ * term, so a list must hold one line per term. Null for lines without a term.
+ */
+export function termKey(k: string): string | null {
+  if (isEntryKey(k)) return null;
+  const [nk, line] = splitLineKey(k);
+  const eq = line.indexOf("=");
+  return eq > 0 ? `${nk}${SEP}${line.slice(0, eq)}` : null;
+}
+
+/** Live name lines grouped by term. */
+function liveTerms(items: Items): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [k, it] of Object.entries(items)) {
+    const tk = it.v === null ? null : termKey(k);
+    if (tk !== null) out.set(tk, [...(out.get(tk) ?? []), k]);
+  }
+  return out;
+}
+
+/**
+ * Keeps one line per term: the newest change wins (ties by line text, so every
+ * browser picks the same one); the others become tombstones.
+ */
+export function resolveTerms(items: Items): boolean {
+  let changed = false;
+  for (const keys of liveTerms(items).values()) {
+    if (keys.length < 2) continue;
+    const winner = keys.reduce((a, b) => (wins({ t: items[b]!.t, v: b }, { t: items[a]!.t, v: a }) ? b : a));
+    for (const k of keys) {
+      if (k === winner) continue;
+      items[k] = { t: items[k]!.t + 1, v: null };
+      changed = true;
+    }
+  }
+  return changed;
 }

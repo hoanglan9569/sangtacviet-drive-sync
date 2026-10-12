@@ -92,7 +92,7 @@ function render(): void {
             [
               `${plural(v.books, "book")} · ${plural(v.names, "name")}`,
               v.deviceName,
-              v.reason === "manual" ? "saved by hand" : v.reason === "restore" ? "saved before a restore" : "",
+              v.reason === "manual" ? "saved by hand" : v.reason === "restore" ? "saved before a restore" : v.reason === "join" ? "its own data before joining" : "",
             ]
               .filter(Boolean)
               .join(" · "),

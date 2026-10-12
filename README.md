@@ -33,7 +33,12 @@ service worker      background.js
 
 - **Merge model:** a last-writer-wins element set (CRDT). Items are one book in the history, or one name line. Each item records when it last changed, and deleted items are kept as tombstones for 180 days. So merging is order-independent and never loses a newer change.
 - **One file per browser** (`device-<id>.json`, found by `appProperties`). Each browser writes only its own file, so two browsers syncing at the same moment cannot clobber each other.
-- **First sync of a browser** merges and deletes nothing. If two browsers both have the same book, the one at the further chapter wins.
+- **One translation per term.** The site uses one line per name term (`$伊莱=…`), so a list keeps one line per term, the newest change. That covers the site appending a renamed name and two browsers renaming the same term.
+- **A browser joining** (first sync, or a page whose site data was cleared) is merged against the account's data and deletes nothing:
+  - Books only one side has, and names only one side has, end up on both.
+  - The same book on both: the further chapter wins.
+  - A name term the account already translates differently: the account's translation stays.
+  - Whatever the joining browser loses that way is saved first as a backup version ("its own data before joining"). It is kept for the policy's days and doesn't count toward versions per day.
 - **Open pages stay consistent:** when synced names arrive for the chapter you have open, the name editor is updated, so the site's next save cannot drop them. On the home page, the history list redraws itself. A toast offers a reload.
 - **Google sign-in:** `chrome.identity.launchWebAuthFlow` with scope `drive.file`, so the extension only sees files it created. Tokens are renewed silently. When Google wants you back, the popup shows **Sign in again**.
 
