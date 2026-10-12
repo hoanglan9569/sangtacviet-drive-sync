@@ -6,7 +6,7 @@
  */
 import type { WritePlan } from "../shared/model";
 import { type ApplyReply, type BackgroundToContent, type ContentToBackground, PAGE_TAG, type ReadReply } from "../shared/messages";
-import { TUSACH_KEY, nameKeyMatcher } from "../shared/sitedata";
+import { MARK_KEY, TUSACH_KEY, nameKeyMatcher } from "../shared/sitedata";
 
 interface BridgeWindow {
   __stvDriveSyncBridge?: () => boolean;
@@ -57,7 +57,11 @@ interface BridgeWindow {
       if (k !== null && match(k)) names[k] = localStorage.getItem(k) ?? "";
     }
     const stamp = /(?:^|;\s*)hstamp=(\d+)/.exec(document.cookie)?.[1];
-    return { snapshot: { tusach: localStorage.getItem(TUSACH_KEY), names }, stamp: stamp ? Number(stamp) * 1000 : undefined };
+    return {
+      snapshot: { tusach: localStorage.getItem(TUSACH_KEY), names },
+      stamp: stamp ? Number(stamp) * 1000 : undefined,
+      marked: localStorage.getItem(MARK_KEY) !== null,
+    };
   }
 
   function apply(plan: WritePlan): ApplyReply {
@@ -69,6 +73,7 @@ interface BridgeWindow {
         if (v == null) localStorage.removeItem(k);
         else localStorage.setItem(k, v);
       }
+      localStorage.setItem(MARK_KEY, "1");
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }

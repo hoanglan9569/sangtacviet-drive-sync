@@ -1,7 +1,7 @@
 import { Drive } from "../src/shared/drive";
 import { type KV, type Replica, SyncEngine } from "../src/shared/engine";
 import type { WritePlan } from "../src/shared/model";
-import { type Snapshot, nameKeyMatcher } from "../src/shared/sitedata";
+import { MARK_KEY, type Snapshot, nameKeyMatcher } from "../src/shared/sitedata";
 import type { FakeDrive } from "./fake-drive";
 
 export function memoryKV(): KV & { data: Map<string, unknown> } {
@@ -40,10 +40,10 @@ export class FakePage implements Replica {
     if (this.clock) this.times[k] = this.clock.now();
   }
 
-  async read(): Promise<{ snapshot: Snapshot }> {
+  async read(): Promise<{ snapshot: Snapshot; marked: boolean }> {
     const names: Record<string, string> = {};
     for (const [k, v] of this.ls) if (this.isName(k)) names[k] = v;
-    return { snapshot: { tusach: this.ls.get("tusach") ?? null, names } };
+    return { snapshot: { tusach: this.ls.get("tusach") ?? null, names }, marked: this.ls.has(MARK_KEY) };
   }
 
   async apply(plan: WritePlan): Promise<boolean> {
@@ -51,6 +51,7 @@ export class FakePage implements Replica {
     this.beforeApply = undefined;
     for (const [k, v] of Object.entries(plan.expect)) if ((this.ls.get(k) ?? null) !== v) return false;
     for (const [k, v] of Object.entries(plan.set)) v === null ? this.ls.delete(k) : this.ls.set(k, v);
+    this.ls.set(MARK_KEY, "1");
     return true;
   }
 

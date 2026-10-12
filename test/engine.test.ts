@@ -262,3 +262,24 @@ test("removing this browser trashes its file and forgets its sync state", async 
   expect(drive.byKind("device")).toHaveLength(0);
   expect([...a.kv.data.keys()]).toEqual([]);
 });
+
+test("clearing a browser's site data restores it from Drive instead of deleting everything", async () => {
+  const a = device(drive, "A", clock);
+  const b = device(drive, "B", clock);
+  const pa = new FakePage(undefined, clock);
+  const pb = new FakePage(undefined, clock);
+  pa.read_("qidian", "100", 5);
+  pa.addName(N, "$伊莱=Y Lai");
+  await a.engine.sync(pa, pa.times);
+  await b.engine.sync(pb, pb.times);
+
+  clock.tick();
+  pa.ls.clear(); // "Clear site data": localStorage gone, the extension's own state is not
+  await a.engine.sync(pa, pa.times);
+  expect(pa.books()).toEqual(["100@5"]);
+  expect(pa.names(N)).toEqual(["$伊莱=Y Lai"]);
+  clock.tick();
+  await b.engine.sync(pb, pb.times);
+  expect(pb.books()).toEqual(["100@5"]);
+  expect(pb.names(N)).toEqual(["$伊莱=Y Lai"]);
+});

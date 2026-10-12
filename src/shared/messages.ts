@@ -15,6 +15,7 @@ export type BackgroundToContent = { type: "read"; hosts: string[] } | { type: "a
 export interface ReadReply {
   snapshot: Snapshot;
   stamp?: number;
+  marked: boolean;
 }
 
 export interface ApplyReply {

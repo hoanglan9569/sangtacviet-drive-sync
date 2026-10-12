@@ -22,6 +22,8 @@ export interface ExportFile {
 }
 
 export const TUSACH_KEY = "tusach";
+/** Written into the page's localStorage by the extension. Missing after a sync means the storage was cleared since. */
+export const MARK_KEY = "stv-drive-sync";
 export const ENTRY_SEP = "~/~";
 export const LINE_SEP = "~//~";
 export const EXTRA_NAME_KEYS = ["qtOnline0"];

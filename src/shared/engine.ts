@@ -34,8 +34,9 @@ const MAX_ATTEMPTS = 5;
 
 export interface Replica {
   origin: string;
-  read(): Promise<{ snapshot: Snapshot; stamp?: number }>;
-  /** Writes `plan.set` if every key still holds its `plan.expect` value; false when the page changed meanwhile. */
+  /** `marked`: the page still holds MARK_KEY, i.e. its storage was not cleared since this extension synced it. */
+  read(): Promise<{ snapshot: Snapshot; stamp?: number; marked: boolean }>;
+  /** Writes `plan.set` if every key still holds its `plan.expect` value, and sets MARK_KEY; false when the page changed meanwhile. */
   apply(plan: WritePlan): Promise<boolean>;
 }
 
@@ -149,7 +150,9 @@ export class SyncEngine {
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const now = this.now();
       const read = replica ? await replica.read() : null;
-      const shadow = replica ? ((await this.kv.get<Snapshot>(this.shadowKey(replica.origin))) ?? null) : null;
+      // No mark: the page's storage was cleared (site data, cookies) since the last sync. Treat it like a
+      // first sync, so the empty page counts as nothing deleted and is filled back from Drive.
+      const shadow = replica && read?.marked ? ((await this.kv.get<Snapshot>(this.shadowKey(replica.origin))) ?? null) : null;
       let changed = false;
       if (read) changed = absorbLocal(state.items, read.snapshot, shadow, { now, times, stamp: read.stamp }) || changed;
       if (attempt === 0) changed = (await this.pull(state, remote)) || changed;
@@ -161,7 +164,7 @@ export class SyncEngine {
       if (!replica || !read) return result([]);
 
       const plan = planWrites(read.snapshot, buildSnapshot(state.items, read.snapshot));
-      if (!isEmptyPlan(plan) && !(await replica.apply(plan))) continue;
+      if ((!isEmptyPlan(plan) || !read.marked) && !(await replica.apply(plan))) continue;
       await this.kv.set(this.shadowKey(replica.origin), applyPlan(read.snapshot, plan));
       if (!remote.origins?.includes(replica.origin)) {
         remote.origins = [...(remote.origins ?? []), replica.origin];
