@@ -1,7 +1,7 @@
 import type { ContentToBackground, Reply, Status, UiRequest } from "../shared/messages";
 import { addAccount, reconnect, signOut } from "./auth";
 import { registerContentScripts } from "./scripts";
-import { getAccountStatus, getSettings, local, matchesDomain, setAccountStatus, updateSettings } from "./settings";
+import { type Settings, getAccountStatus, getSettings, local, matchesDomain, setAccountStatus, updateSettings } from "./settings";
 import { detach, engineFor, isSyncing, openTabCount, recordWrite, schedule, serialized, syncAllNow, updateBadge } from "./sync";
 import type { RemoteDevice } from "../shared/engine";
 
@@ -127,6 +127,25 @@ async function handleUi(msg: UiRequest): Promise<unknown> {
       await updateBadge();
       await changed();
       return null;
+    case "backups":
+      if (!active) throw new Error("No account selected");
+      return serialized(() => engineFor(s, active).backups());
+    case "backupNow":
+      return serialized(() => linkedEngine(s).backupNow());
+    case "setBackupPolicy":
+      if (!active) throw new Error("No account selected");
+      return serialized(() => engineFor(s, active).setBackupPolicy(msg.policy));
+    case "deleteBackup":
+      if (!active) throw new Error("No account selected");
+      return serialized(() => engineFor(s, active).deleteBackup(msg.id));
+    case "downloadBackup":
+      if (!active) throw new Error("No account selected");
+      return engineFor(s, active).downloadBackup(msg.id);
+    case "restoreBackup":
+      await serialized(() => linkedEngine(s).restoreBackup(msg.id));
+      await syncAllNow(); // writes the restored data into open pages
+      await changed();
+      return null;
     case "settingsChanged":
       await registerContentScripts();
       schedule();
@@ -161,4 +180,11 @@ async function status(): Promise<Status> {
 /** Tells an open popup to redraw. */
 async function changed(): Promise<void> {
   await chrome.runtime.sendMessage({ type: "changed" }).catch(() => {});
+}
+
+/** The engine of the selected account, which must sync in this browser. */
+function linkedEngine(s: Settings) {
+  if (!s.active) throw new Error("No account selected");
+  if (!s.linked[s.active]) throw new Error("Start syncing this account first.");
+  return engineFor(s, s.active);
 }

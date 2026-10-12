@@ -73,6 +73,12 @@ Settings: domains (adding one asks for access to it), the OAuth client ID, and *
 - **Rename** it. Another browser takes the new name at its next sync.
 - **Remove** it. Its file goes to the Drive trash, and anything it already synced stays. That browser stops syncing with the account until it is linked again from its own popup. "Remove this browser" does the same for the current browser.
 
+**Backups** keeps versions of the account's data in its Drive (`SangTacViet Sync/backup …txt`, site format). The card shows the policy; click it to manage versions:
+
+- A sync saves a version when the data changed, at most once an hour. Each day keeps its newest **versions per day** (default 2), for **days to keep** (default 7). The policy is stored on the Drive folder, so all browsers on the account share it.
+- Pick a version to **Restore** it, **Download** it as `.txt`, or **Delete** it. Restore replaces the data in every browser on the account, and saves the current data as a version first.
+- The list refreshes on its own.
+
 ## Development
 
 ```powershell
@@ -85,12 +91,13 @@ bun run test/fake-drive.ts 8787 [--file state.json]   # fake Drive for manual/br
 | `manifest.json` | the extension manifest; the repo root is the unpacked extension |
 | `src/shared/sitedata.ts` | the site's data format, name-key rule |
 | `src/shared/model.ts` | items, merge, diff (pure) |
-| `src/shared/engine.ts` | one sync round against Drive |
+| `src/shared/engine.ts` | one sync round against Drive, backup versions |
 | `src/shared/drive.ts` | Drive v3 calls |
+| `src/shared/backups.ts` | backup policy and rotation (pure) |
 | `src/background/` | service worker: auth, settings, scheduling, content-script registration |
 | `src/content/` | `hook.ts` (page world), `bridge.ts` (content script) |
-| `src/ui/` | popup, settings page |
-| `test/` | merge/engine tests against `fake-drive.ts` |
+| `src/ui/` | popup, settings page (`backups.ts`: the Backups card and dialog) |
+| `test/` | merge, engine and backup tests against `fake-drive.ts` |
 
 Limits:
 

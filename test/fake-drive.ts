@@ -130,6 +130,10 @@ export class FakeDrive {
     if (req.method === "GET" && f) {
       return new Response(f.content, { headers: { ...CORS, "Content-Type": "text/plain; charset=utf-8" } });
     }
+    if (req.method === "DELETE" && f) {
+      this.files.delete(f.id);
+      return new Response(null, { status: 204, headers: CORS });
+    }
     if (req.method === "PATCH" && !upload && f) {
       const meta = (await req.json()) as DriveFile;
       if (meta.appProperties) f.appProperties = { ...f.appProperties, ...meta.appProperties };

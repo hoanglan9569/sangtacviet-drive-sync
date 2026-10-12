@@ -24,8 +24,22 @@ import {
   isEmptyPlan,
   mergeItems,
   planWrites,
+  replaceWith,
 } from "./model";
-import { type Snapshot, toExport } from "./sitedata";
+import { type ExportFile, type Snapshot, fromExport, toExport } from "./sitedata";
+import {
+  type BackupPolicy,
+  type BackupReason,
+  type BackupVersion,
+  BACKUP_GAP,
+  byNewest,
+  clampPolicy,
+  dayOf,
+  policyFrom,
+  policyProps,
+  toPrune,
+  versionFrom,
+} from "./backups";
 
 export const FOLDER_NAME = "SangTacViet Sync";
 export const EXPORT_NAME = "dulieu.txt";
@@ -82,6 +96,9 @@ interface RemoteState {
   exportFileId?: string;
   pushedRev: number;
   exportHash?: string;
+  /** Hash and time of the newest backup version this browser knows of. */
+  backupHash?: string;
+  backupAt?: number;
   /** Device file id -> checksum already merged. */
   peers: Record<string, string>;
   devices: RemoteDevice[];
@@ -161,6 +178,7 @@ export class SyncEngine {
       await this.kv.set(this.stateKey, state);
       pushed = (await this.push(state, remote)) || pushed;
       await this.kv.set(this.remoteKey, remote);
+      if (attempt === 0 && (await this.autoBackup(state, remote))) await this.kv.set(this.remoteKey, remote);
       if (!replica || !read) return result([]);
 
       const plan = planWrites(read.snapshot, buildSnapshot(state.items, read.snapshot));
@@ -341,6 +359,121 @@ export class SyncEngine {
     if (!remote) return;
     fn(remote);
     await this.kv.set(this.remoteKey, remote);
+  }
+
+  // ---- backup versions
+
+  /** The policy and every version, newest first. */
+  async backups(): Promise<{ policy: BackupPolicy; versions: BackupVersion[] }> {
+    const files = await this.drive.list(`trashed=false and (${tag("root")} or ${tag("backup")})`);
+    const root = files.filter((f) => f.appProperties?.stvSync === "root").sort((a, b) => (a.createdTime ?? "").localeCompare(b.createdTime ?? ""))[0];
+    const versions = files.filter((f) => f.appProperties?.stvSync === "backup").map(versionFrom).sort(byNewest);
+    return { policy: policyFrom(root?.appProperties), versions };
+  }
+
+  /** Saves a version after a sync when the data changed since the newest one, at most once per BACKUP_GAP. */
+  private async autoBackup(state: AccountState, remote: RemoteState): Promise<boolean> {
+    if (!counts(state.items).books && !counts(state.items).names) return false;
+    const text = exportText(state.items);
+    const hash = await sha256(text);
+    const now = this.now();
+    if (hash === remote.backupHash || now - (remote.backupAt ?? 0) < BACKUP_GAP) return false;
+    try {
+      const { policy, versions } = await this.backups();
+      const newest = versions[0];
+      if (newest && (newest.hash === hash || now - newest.at < BACKUP_GAP)) {
+        remote.backupHash = newest.hash;
+        remote.backupAt = newest.at;
+        return true;
+      }
+      const v = await this.writeBackup(text, hash, state.items, remote, "auto");
+      await this.prune([v, ...versions], policy);
+    } catch (e) {
+      console.warn("Backup failed; the next sync tries again.", e); // never fails the sync itself
+    }
+    return true;
+  }
+
+  private async writeBackup(text: string, hash: string, items: Items, remote: RemoteState, reason: BackupReason): Promise<BackupVersion> {
+    const at = this.now();
+    const c = counts(items);
+    const day = dayOf(at);
+    const file = await this.drive.create(
+      {
+        name: `backup ${day} ${new Date(at).toTimeString().slice(0, 8).replaceAll(":", "")}.txt`,
+        parents: [await this.ensureFolder(remote)],
+        appProperties: {
+          stvSync: "backup",
+          at: String(at),
+          day,
+          deviceName: this.device.name.slice(0, 60),
+          books: String(c.books),
+          names: String(c.names),
+          hash,
+          reason,
+        },
+      },
+      text,
+      "text/plain",
+    );
+    remote.backupHash = hash;
+    remote.backupAt = at;
+    return versionFrom(file);
+  }
+
+  private async prune(versions: BackupVersion[], policy: BackupPolicy, keep?: string): Promise<void> {
+    for (const v of toPrune(versions, policy, this.now())) if (v.id !== keep) await this.drive.remove(v.id);
+  }
+
+  /** Saves a version now, whatever the gap; skipped when the newest one already holds the same data. */
+  async backupNow(): Promise<void> {
+    const [state, remote] = await this.load();
+    const text = exportText(state.items);
+    const hash = await sha256(text);
+    const { policy, versions } = await this.backups();
+    if (versions[0]?.hash === hash) return;
+    const v = await this.writeBackup(text, hash, state.items, remote, "manual");
+    await this.prune([v, ...versions], policy);
+    await this.updateCache((r) => Object.assign(r, { backupHash: remote.backupHash, backupAt: remote.backupAt, folderId: remote.folderId }));
+  }
+
+  async setBackupPolicy(p: Partial<BackupPolicy>): Promise<BackupPolicy> {
+    const policy = clampPolicy(p);
+    const [, remote] = await this.load();
+    const folder = await this.ensureFolder(remote);
+    await this.drive.patch(folder, { appProperties: policyProps(policy) });
+    await this.updateCache((r) => (r.folderId = folder));
+    await this.prune((await this.backups()).versions, policy);
+    return policy;
+  }
+
+  async deleteBackup(id: string): Promise<void> {
+    await this.drive.remove(id);
+  }
+
+  async downloadBackup(id: string): Promise<string> {
+    return this.drive.download(id);
+  }
+
+  /**
+   * Replaces the account's data with a version, in every browser (as a change
+   * newer than everything). The current data is saved as a version first.
+   * Open pages get it at their next sync.
+   */
+  async restoreBackup(id: string): Promise<void> {
+    const file = JSON.parse(await this.drive.download(id)) as Partial<ExportFile>;
+    if (!file || typeof file !== "object" || typeof file.name !== "object") throw new Error("That file is not a backup version.");
+    const [state, remote] = await this.load();
+    const { policy, versions } = await this.backups();
+    const text = exportText(state.items);
+    const hash = await sha256(text);
+    const saved = versions[0]?.hash === hash ? [] : [await this.writeBackup(text, hash, state.items, remote, "restore")];
+    replaceWith(state.items, fromExport({ name: file.name, tusach: file.tusach }), this.now());
+    state.rev++;
+    await this.kv.set(this.stateKey, state);
+    await this.push(state, remote);
+    await this.kv.set(this.remoteKey, remote);
+    await this.prune([...saved, ...versions], policy, id); // never the version just restored
   }
 
   async exportText(): Promise<string> {

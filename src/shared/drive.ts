@@ -99,6 +99,11 @@ export class Drive {
     return (await this.call(`/drive/v3/files/${encodeURIComponent(id)}?fields=${FIELDS}`)).json() as Promise<DriveFile>;
   }
 
+  /** Deletes for good (no trash). */
+  async remove(id: string): Promise<void> {
+    await this.call(`/drive/v3/files/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
   /** Changes metadata only: `appProperties` are merged into the file's; `trashed: true` moves it to the trash. */
   async patch(id: string, meta: { appProperties?: Record<string, string>; trashed?: boolean }): Promise<DriveFile> {
     const res = await this.call(`/drive/v3/files/${encodeURIComponent(id)}?fields=${FIELDS}`, {

@@ -301,13 +301,14 @@ dialog {
   background: var(--card);
   color: var(--text);
 }
-dialog form {
+dialog > form,
+dialog > .body {
   padding: 16px;
 }
 dialog .row {
   margin: 12px 0 0;
 }
-dialog input {
+dialog input:not([type]) {
   width: 100%;
 }
 dialog::backdrop {
@@ -315,4 +316,74 @@ dialog::backdrop {
 }
 [hidden] {
   display: none !important;
+}
+.card.clickable {
+  cursor: pointer;
+}
+.card.clickable:hover,
+.card.clickable:focus-visible {
+  border-color: var(--accent);
+}
+.card.clickable p {
+  margin: 0;
+}
+dialog.wide {
+  width: min(560px, calc(100vw - 32px));
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.dialog-head h2 {
+  margin: 0;
+}
+label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+label.inline input {
+  width: 72px;
+  flex: none;
+}
+.versions {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 8px 6px;
+  margin-bottom: 8px;
+}
+.versions h3 {
+  position: sticky;
+  top: 0;
+  margin: 0;
+  padding: 8px 0 4px;
+  background: var(--card);
+}
+.versions .muted {
+  margin: 8px 0;
+}
+.version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 5px 6px;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+.version:hover {
+  background: var(--bg);
+}
+.version.selected {
+  background: var(--bg);
+  outline: 1px solid var(--accent);
+}
+.version input {
+  flex: none;
+  margin: 0;
 }

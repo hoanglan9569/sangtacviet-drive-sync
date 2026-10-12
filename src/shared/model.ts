@@ -258,3 +258,18 @@ export function counts(items: Items): { books: number; nameLists: number; names:
 }
 
 export const EMPTY: Snapshot = { tusach: null, names: {} };
+
+/**
+ * Makes `items` describe `s` exactly (a restore), as a change newer than
+ * anything in them: every browser takes it, deletions included. The history
+ * keeps `s`'s order.
+ */
+export function replaceWith(items: Items, s: Snapshot, now: number): void {
+  const L = liveItems(s);
+  let base = now;
+  for (const it of Object.values(items)) base = Math.max(base, it.t + 1);
+  base += L.order.length;
+  const rank = new Map(L.order.map((k, i) => [k, i]));
+  for (const [k, it] of Object.entries(items)) if (it.v !== null && !L.values.has(k)) items[k] = { t: base, v: null };
+  for (const [k, v] of L.values) items[k] = { t: base - (rank.get(k) ?? 0), v };
+}

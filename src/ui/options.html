@@ -52,8 +52,36 @@
         <p class="muted small" id="browsers-note"></p>
         <ul id="browsers" class="list browsers"></ul>
       </section>
+      <section class="card clickable" id="backups-card" role="button" tabindex="0" title="Manage backup versions">
+        <h2>Backups</h2>
+        <p class="muted small" id="backups-summary">…</p>
+      </section>
       <p id="msg" class="muted"></p>
     </main>
+    <dialog id="backups" class="wide">
+      <div class="body">
+        <div class="dialog-head">
+          <h2>Backups</h2>
+          <button type="button" class="icon" id="backups-close" aria-label="Close">✕</button>
+        </div>
+        <p class="muted small" id="backups-account"></p>
+        <form id="policy-form" class="row">
+          <label class="inline">Versions per day <input id="per-day" type="number" min="1" max="24" required /></label>
+          <label class="inline">Days to keep <input id="days" type="number" min="1" max="365" required /></label>
+          <button class="primary" id="policy-save">Save</button>
+        </form>
+        <p class="muted small">A new version is saved at most once an hour while your data changes. Each day keeps its newest versions; older days are deleted.</p>
+        <div id="versions" class="versions" role="radiogroup" aria-label="Versions"></div>
+        <p class="error small" id="backups-error"></p>
+        <div class="row">
+          <button type="button" id="backup-now">Back up now</button>
+          <span class="grow"></span>
+          <button type="button" id="version-download" disabled>Download</button>
+          <button type="button" id="version-delete" class="danger" disabled>Delete</button>
+          <button type="button" id="version-restore" class="primary" disabled>Restore</button>
+        </div>
+      </div>
+    </dialog>
     <dialog id="browser">
       <form id="browser-form">
         <h2 id="browser-title"></h2>
