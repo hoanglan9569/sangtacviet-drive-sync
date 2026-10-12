@@ -1,6 +1,6 @@
 /**
  * Settings page "Backups": a one-line card; a click opens a dialog with the
- * policy (versions per day, days kept) and the versions, where one can be
+ * policy (versions per day, saved days kept) and the versions, where one can be
  * picked to restore, download or delete. Both stay current on their own.
  */
 import type { BackupPolicy, BackupVersion } from "../shared/backups";
@@ -62,7 +62,7 @@ function render(): void {
   else if (error && !data) summary.replaceChildren(h("span", { class: "error" }, error));
   else
     summary.replaceChildren(
-      policy ? `${plural(policy.perDay, "version")} a day · kept ${plural(policy.days, "day")}` : "…",
+      policy ? `${plural(policy.perDay, "version")} a day · last ${plural(policy.days, "saved day")}` : "…",
       h("br"),
       versions.length ? `${plural(versions.length, "version")} · newest ${ago(versions[0]!.at)}` : a.linked ? "No versions yet: the next sync saves one." : "Start syncing this account to keep versions.",
     );

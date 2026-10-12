@@ -33,7 +33,6 @@ import {
   type BackupPolicy,
   type BackupReason,
   type BackupVersion,
-  BACKUP_GAP,
   byNewest,
   clampPolicy,
   dayOf,
@@ -98,9 +97,8 @@ interface RemoteState {
   exportFileId?: string;
   pushedRev: number;
   exportHash?: string;
-  /** Hash and time of the newest backup version this browser knows of. */
+  /** Hash of the newest backup version this browser knows of. */
   backupHash?: string;
-  backupAt?: number;
   /** Device file id -> checksum already merged. */
   peers: Record<string, string>;
   devices: RemoteDevice[];
@@ -381,19 +379,17 @@ export class SyncEngine {
     return { policy: policyFrom(root?.appProperties), versions };
   }
 
-  /** Saves a version after a sync when the data changed since the newest one, at most once per BACKUP_GAP. */
+  /** Saves a version after a sync whenever the data changed since the newest one. */
   private async autoBackup(state: AccountState, remote: RemoteState): Promise<boolean> {
     if (!counts(state.items).books && !counts(state.items).names) return false;
     const text = exportText(state.items);
     const hash = await sha256(text);
-    const now = this.now();
-    if (hash === remote.backupHash || now - (remote.backupAt ?? 0) < BACKUP_GAP) return false;
+    if (hash === remote.backupHash) return false;
     try {
       const { policy, versions } = await this.backups();
       const newest = latest(versions);
-      if (newest && (newest.hash === hash || now - newest.at < BACKUP_GAP)) {
-        remote.backupHash = newest.hash;
-        remote.backupAt = newest.at;
+      if (newest?.hash === hash) {
+        remote.backupHash = hash; // saved by another browser
         return true;
       }
       const v = await this.writeBackup(text, hash, state.items, remote, "auto");
@@ -426,10 +422,7 @@ export class SyncEngine {
       text,
       "text/plain",
     );
-    if (reason !== "join") {
-      remote.backupHash = hash;
-      remote.backupAt = at;
-    }
+    if (reason !== "join") remote.backupHash = hash;
     return versionFrom(file);
   }
 
@@ -453,7 +446,7 @@ export class SyncEngine {
   }
 
   private async prune(versions: BackupVersion[], policy: BackupPolicy, keep?: string): Promise<void> {
-    for (const v of toPrune(versions, policy, this.now())) if (v.id !== keep) await this.drive.remove(v.id);
+    for (const v of toPrune(versions, policy)) if (v.id !== keep) await this.drive.remove(v.id);
   }
 
   /** Saves a version now, whatever the gap; skipped when the newest one already holds the same data. */
@@ -465,7 +458,7 @@ export class SyncEngine {
     if (latest(versions)?.hash === hash) return;
     const v = await this.writeBackup(text, hash, state.items, remote, "manual");
     await this.prune([v, ...versions], policy);
-    await this.updateCache((r) => Object.assign(r, { backupHash: remote.backupHash, backupAt: remote.backupAt, folderId: remote.folderId }));
+    await this.updateCache((r) => Object.assign(r, { backupHash: remote.backupHash, folderId: remote.folderId }));
   }
 
   async setBackupPolicy(p: Partial<BackupPolicy>): Promise<BackupPolicy> {
