@@ -1,0 +1,48 @@
+/**
+ * Builds the unpacked extension into dist/extension.
+ *
+ *   bun run build
+ *
+ * $env:STV_GOOGLE_CLIENT_ID (or STV_GOOGLE_CLIENT_ID in .env) is baked in as
+ * the default OAuth client ID; without it, set one in the Settings page.
+ */
+import { cpSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+
+const ROOT = resolve(import.meta.dir, "..");
+const SRC = join(ROOT, "src");
+const OUT = join(ROOT, "dist", "extension");
+
+const ENTRIES: { src: string; out: string; format: "esm" | "iife" }[] = [
+  { src: "background/main.ts", out: "background", format: "esm" },
+  { src: "ui/popup.ts", out: "popup", format: "esm" },
+  { src: "ui/options.ts", out: "options", format: "esm" },
+  // Content scripts are classic scripts.
+  { src: "content/hook.ts", out: "hook", format: "iife" },
+  { src: "content/bridge.ts", out: "bridge", format: "iife" },
+];
+const STATIC = ["ui/popup.html", "ui/options.html", "ui/styles.css"];
+
+rmSync(OUT, { recursive: true, force: true });
+const clientId = process.env.STV_GOOGLE_CLIENT_ID ?? "";
+for (const e of ENTRIES) {
+  const result = await Bun.build({
+    entrypoints: [join(SRC, e.src)],
+    outdir: OUT,
+    target: "browser",
+    format: e.format,
+    naming: `${e.out}.[ext]`,
+    define: { __CLIENT_ID__: JSON.stringify(clientId) },
+  });
+  if (!result.success) {
+    for (const log of result.logs) console.error(log);
+    throw new Error(`build failed: ${e.src}`);
+  }
+}
+for (const f of STATIC) cpSync(join(SRC, f), join(OUT, f.split("/").pop()!));
+cpSync(join(SRC, "icons"), join(OUT, "icons"), { recursive: true });
+
+const { version } = (await Bun.file(join(ROOT, "package.json")).json()) as { version: string };
+const manifest = (await Bun.file(join(SRC, "manifest.json")).json()) as Record<string, unknown>;
+await Bun.write(join(OUT, "manifest.json"), JSON.stringify({ ...manifest, version }, null, 2));
+console.log(`extension -> ${OUT}${clientId ? "" : "  (no STV_GOOGLE_CLIENT_ID: set the client ID in Settings)"}`);

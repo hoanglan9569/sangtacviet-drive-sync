@@ -1,0 +1,18 @@
+{
+  "name": "sangtacviet-drive-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sync SangTacViet reading history and names across browsers through Google Drive.",
+  "type": "module",
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p src",
+    "test": "bun test",
+    "check": "bun run typecheck && bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "@types/chrome": "^0.3.5",
+    "typescript": "^7.0.2"
+  }
+}

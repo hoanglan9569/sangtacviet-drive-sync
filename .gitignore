@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Local OAuth client id for builds (see README)
+.env
+.env.*
+
+# Logs, editors, OS
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

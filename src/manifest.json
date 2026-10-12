@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "SangTacViet Drive Sync",
+  "version": "0.0.0",
+  "description": "Sync SangTacViet reading history and names across browsers through your Google Drive.",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwxrToe+7yP9W23IGp/XFg2F4C4Y3adwFB/fBpQZ4g/hhi23rN7ZNwO4qsQ/90BDL4pC/RauEIZJSav0GV29vgUH2lvYJ5ebR9XgnhnAADjxX9LlFVPPUKqAaXEJAwudthvKo/9NU7D6s/HktpPD/ypo8+4iYrVUNSCYZ8HBdO7ocvSjVGX8Z99I4Op0hJUUGbc8iST7B5wz/X9HhhFzA3H80plOAcJizdsxXZLSAeVSin1X6z3uGMIISvADQBCxKzJ1TVlZL1EfTaq4ekWGgaasxKNhrovud/zTYbcu6c7MLX15amYJ0xmMO5VmoHnQYbMKqzCLowXLY3774VKltPwIDAQAB",
+  "permissions": ["storage", "unlimitedStorage", "identity", "alarms", "scripting"],
+  "host_permissions": [
+    "*://*.sangtacviet.com/*",
+    "*://*.sangtacviet.app/*",
+    "https://www.googleapis.com/*"
+  ],
+  "optional_host_permissions": ["*://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "SangTacViet Drive Sync",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
+  },
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}
