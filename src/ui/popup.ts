@@ -1,12 +1,17 @@
 import type { RemoteSummary } from "../shared/engine";
 import type { AccountView, Status } from "../shared/messages";
 import { ago, busy, call, h } from "./common";
+import { icon } from "./icons";
+import { themeToggle } from "./theme";
 
 const app = document.getElementById("app")!;
 let error = "";
 let summary: { sub: string; value?: RemoteSummary; error?: string } | undefined;
 
-document.getElementById("settings")!.addEventListener("click", () => chrome.runtime.openOptionsPage());
+themeToggle(document.getElementById("theme")!);
+const settings = document.getElementById("settings")!;
+settings.append(icon("settings"));
+settings.addEventListener("click", () => chrome.runtime.openOptionsPage());
 chrome.runtime.onMessage.addListener((m: { type?: string }) => {
   if (m.type === "changed") void render();
 });

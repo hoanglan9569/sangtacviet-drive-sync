@@ -1,5 +1,8 @@
 import { DEFAULT_DOMAINS, domainPatterns, getSettings, updateSettings } from "../background/settings";
 import { call, h } from "./common";
+import { themeToggle } from "./theme";
+
+themeToggle(document.getElementById("theme")!);
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const msg = (text: string, bad = false) => {

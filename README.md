@@ -43,10 +43,10 @@ Building needs [Bun](https://bun.sh).
 
 ```powershell
 bun install
-bun run build          # -> dist/extension
+bun run build          # -> dist
 ```
 
-1. `chrome://extensions` → Developer mode → **Load unpacked** → `dist/extension`. The ID is fixed by the manifest `key`: `dkgknammpnaadehadhbojamiogakmnhh`.
+1. `chrome://extensions` → Developer mode → **Load unpacked** → `dist`. The ID is fixed by the manifest `key`: `dkgknammpnaadehadhbojamiogakmnhh`.
 2. Create a Google OAuth client (once):
    - [console.cloud.google.com](https://console.cloud.google.com) → new project → enable **Google Drive API**.
    - **Google Auth Platform** → Get started: app name, support email, audience **External**, contact email.
@@ -65,6 +65,8 @@ Click the toolbar icon.
    - Nothing there → **Start syncing** uploads this browser's data.
 3. **+ Add another Google account** adds more accounts. The radio button picks the one this browser syncs with.
 4. While syncing, the popup offers **Sync now**, **Download .txt** (the merged data in the site's format), the list of browsers on the account, and **Stop syncing in this browser**.
+
+The ☾/☀ button next to Settings switches between light and dark mode.
 
 Settings: domains (adding one asks for access to it), OAuth client ID, and the name other browsers see for this one.
 

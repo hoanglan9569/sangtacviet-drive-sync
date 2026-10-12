@@ -1,5 +1,5 @@
 /**
- * Builds the unpacked extension into dist/extension.
+ * Builds the unpacked extension into dist/.
  *
  *   bun run build
  *
@@ -11,13 +11,14 @@ import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
 const SRC = join(ROOT, "src");
-const OUT = join(ROOT, "dist", "extension");
+const OUT = join(ROOT, "dist");
 
 const ENTRIES: { src: string; out: string; format: "esm" | "iife" }[] = [
   { src: "background/main.ts", out: "background", format: "esm" },
   { src: "ui/popup.ts", out: "popup", format: "esm" },
   { src: "ui/options.ts", out: "options", format: "esm" },
-  // Content scripts are classic scripts.
+  // Classic scripts: content scripts, and theme-init (render-blocking in <head>).
+  { src: "ui/theme-init.ts", out: "theme-init", format: "iife" },
   { src: "content/hook.ts", out: "hook", format: "iife" },
   { src: "content/bridge.ts", out: "bridge", format: "iife" },
 ];

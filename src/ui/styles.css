@@ -9,10 +9,11 @@
   --good: #188038;
   --bad: #d93025;
   --warn-bg: #fef7e0;
-  color-scheme: light dark;
+  color-scheme: light;
 }
+/* Dark: the OS setting unless the toggle picked light, or the toggle picked dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1b1c1f;
     --card: #26272b;
     --text: #e8eaed;
@@ -23,7 +24,21 @@
     --good: #81c995;
     --bad: #f28b82;
     --warn-bg: #3a3221;
+    color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #1b1c1f;
+  --card: #26272b;
+  --text: #e8eaed;
+  --muted: #9aa0a6;
+  --line: #3a3b40;
+  --accent: #8ab4f8;
+  --accent-text: #0b1f3a;
+  --good: #81c995;
+  --bad: #f28b82;
+  --warn-bg: #3a3221;
+  color-scheme: dark;
 }
 * {
   box-sizing: border-box;
@@ -117,11 +132,16 @@ button.danger {
   color: var(--bad);
 }
 button.icon {
+  display: inline-flex;
   border: 0;
   background: none;
-  padding: 2px 6px;
+  padding: 4px;
   font-size: 16px;
   color: var(--muted);
+}
+header button.icon:hover {
+  color: var(--text);
+  background: var(--bg);
 }
 input {
   font: inherit;

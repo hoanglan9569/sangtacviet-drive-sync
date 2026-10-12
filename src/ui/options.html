@@ -3,12 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <title>SangTacViet Drive Sync — Settings</title>
+    <script src="theme-init.js"></script>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body class="options">
     <header>
       <img src="icons/32.png" alt="" width="24" height="24" />
       <h1>SangTacViet Drive Sync — Settings</h1>
+      <button id="theme" class="icon"></button>
     </header>
     <main>
       <section class="card">
@@ -37,8 +39,9 @@
           <summary>How to create the client ID</summary>
           <ol>
             <li>console.cloud.google.com → create a project → <b>APIs &amp; Services → Library</b> → enable <b>Google Drive API</b>.</li>
-            <li><b>OAuth consent screen</b>: External; scopes <code>openid</code>, <code>email</code>, <code>profile</code>, <code>…/auth/drive.file</code>; then <b>Publish app</b> (drive.file needs no review).</li>
-            <li><b>Credentials → Create credentials → OAuth client ID</b> → type <b>Web application</b> → add the redirect URI above.</li>
+            <li><b>Google Auth Platform → Get started</b>: app name, support email, audience <b>External</b>, contact email.</li>
+            <li><b>Branding</b>: add a home page and a privacy policy link; then <b>Audience → Publish app</b> (drive.file needs no review).</li>
+            <li><b>Clients → Create client</b> → type <b>Web application</b> → add the redirect URI above.</li>
             <li>Copy the client ID here and press Save.</li>
           </ol>
         </details>
