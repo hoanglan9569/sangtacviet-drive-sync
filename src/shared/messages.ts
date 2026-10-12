@@ -1,4 +1,4 @@
-import type { BackupPolicy } from "./backups";
+import type { VersionPolicy } from "./versions";
 import type { Device, RemoteDevice, RemoteSummary } from "./engine";
 import type { WritePlan, counts } from "./model";
 import type { Snapshot } from "./sitedata";
@@ -38,12 +38,12 @@ export type UiRequest =
   | { type: "devices" }
   | { type: "renameDevice"; id: string; name: string }
   | { type: "removeDevice"; id: string }
-  | { type: "backups" }
-  | { type: "backupNow" }
-  | { type: "setBackupPolicy"; policy: BackupPolicy }
-  | { type: "deleteBackup"; id: string }
-  | { type: "downloadBackup"; id: string }
-  | { type: "restoreBackup"; id: string }
+  | { type: "versions" }
+  | { type: "saveVersion" }
+  | { type: "setVersionPolicy"; policy: VersionPolicy }
+  | { type: "deleteVersion"; id: string }
+  | { type: "downloadVersion"; id: string }
+  | { type: "restoreVersion"; id: string }
   | { type: "settingsChanged" };
 
 export interface Account {

@@ -127,22 +127,22 @@ async function handleUi(msg: UiRequest): Promise<unknown> {
       await updateBadge();
       await changed();
       return null;
-    case "backups":
+    case "versions":
       if (!active) throw new Error("No account selected");
-      return serialized(() => engineFor(s, active).backups());
-    case "backupNow":
-      return serialized(() => linkedEngine(s).backupNow());
-    case "setBackupPolicy":
+      return serialized(() => engineFor(s, active).versions());
+    case "saveVersion":
+      return serialized(() => linkedEngine(s).saveVersion());
+    case "setVersionPolicy":
       if (!active) throw new Error("No account selected");
-      return serialized(() => engineFor(s, active).setBackupPolicy(msg.policy));
-    case "deleteBackup":
+      return serialized(() => engineFor(s, active).setVersionPolicy(msg.policy));
+    case "deleteVersion":
       if (!active) throw new Error("No account selected");
-      return serialized(() => engineFor(s, active).deleteBackup(msg.id));
-    case "downloadBackup":
+      return serialized(() => engineFor(s, active).deleteVersion(msg.id));
+    case "downloadVersion":
       if (!active) throw new Error("No account selected");
-      return engineFor(s, active).downloadBackup(msg.id);
-    case "restoreBackup":
-      await serialized(() => linkedEngine(s).restoreBackup(msg.id));
+      return engineFor(s, active).downloadVersion(msg.id);
+    case "restoreVersion":
+      await serialized(() => linkedEngine(s).restoreVersion(msg.id));
       await syncAllNow(); // writes the restored data into open pages
       await changed();
       return null;

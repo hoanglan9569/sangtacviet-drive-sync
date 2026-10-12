@@ -2,7 +2,7 @@
  * In-memory stand-in for the Drive v3 endpoints src/shared/drive.ts uses:
  * list (appProperties filters only), download, get, metadata patch (rename,
  * trash), folder create, multipart create, media update, delete, and revisions
- * (list, download, delete; keepRevisionForever, Drive's limit of 200 kept). Every account
+ * (list, download, keep forever, delete; keepRevisionForever, Drive's limit of 200 kept). Every account
  * sees the same files; tokens are not checked beyond being present. CORS is open so an
  * extension service worker can call it.
  *
@@ -32,6 +32,8 @@ const CORS = {
 export class FakeDrive {
   readonly files = new Map<string, Stored>();
   readonly log: string[] = [];
+  /** False: uploads ignore keepRevisionForever (what the engine must cope with). */
+  honourKeep = true;
   /** Server time; tests point it at their clock. */
   now: () => number = Date.now;
   private seq = 0;
@@ -163,8 +165,19 @@ export class FakeDrive {
         if (!r.keepForever) return this.json({ error: { message: "Only revisions kept forever can be downloaded." } }, 403);
         return new Response(r.content, { headers: { ...CORS, "Content-Type": "text/plain; charset=utf-8" } });
       }
+      if (req.method === "PATCH") {
+        const { keepForever } = (await req.json()) as { keepForever?: boolean };
+        if (keepForever && !r.keepForever) {
+          const full = this.keptFull(f, true);
+          if (full) return full;
+        }
+        if (keepForever !== undefined) r.keepForever = keepForever;
+        const { content: _c, ...meta } = r;
+        return this.json(meta);
+      }
       if (req.method === "DELETE") {
         if (r === list.at(-1)) return this.json({ error: { message: "The current revision cannot be deleted." } }, 400);
+        if (!r.keepForever) return this.json({ error: { message: "Only revisions kept forever can be deleted." } }, 403);
         f.revisions = list.filter((x) => x !== r);
         return new Response(null, { status: 204, headers: CORS });
       }
@@ -192,7 +205,7 @@ export class FakeDrive {
       const parts = (await req.text()).split(`--${boundary}`);
       const body = (p: string) => p.slice(p.indexOf("\r\n\r\n") + 4).replace(/\r\n$/, "");
       const meta = JSON.parse(body(parts[1]!)) as DriveFile & FileMeta;
-      const keep = url.searchParams.get("keepRevisionForever") === "true";
+      const keep = this.honourKeep && url.searchParams.get("keepRevisionForever") === "true";
       if (!f) {
         const created = this.add(meta, body(parts[2]!));
         this.revise(created, meta, keep);

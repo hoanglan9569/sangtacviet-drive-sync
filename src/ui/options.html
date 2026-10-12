@@ -52,29 +52,29 @@
         <p class="muted small" id="browsers-note"></p>
         <ul id="browsers" class="list browsers"></ul>
       </section>
-      <section class="card clickable" id="backups-card" role="button" tabindex="0" title="Manage backup versions">
-        <h2>Backups</h2>
-        <p class="muted small" id="backups-summary">…</p>
+      <section class="card clickable" id="versions-card" role="button" tabindex="0" title="Manage versions">
+        <h2>Versions</h2>
+        <p class="muted small" id="versions-summary">…</p>
       </section>
       <p id="msg" class="muted"></p>
     </main>
-    <dialog id="backups" class="wide">
+    <dialog id="versions-dialog" class="wide">
       <div class="body">
         <div class="dialog-head">
-          <h2>Backups</h2>
-          <button type="button" class="icon" id="backups-close" aria-label="Close">✕</button>
+          <h2>Versions</h2>
+          <button type="button" class="icon" id="versions-close" aria-label="Close">✕</button>
         </div>
-        <p class="muted small" id="backups-account"></p>
+        <p class="muted small" id="versions-account"></p>
         <form id="policy-form" class="row">
           <label class="inline">Versions per day <input id="per-day" type="number" min="1" max="24" required /></label>
           <label class="inline" title="Only days that have versions count; days with nothing saved are skipped.">Saved days to keep <input id="days" type="number" min="1" max="365" required /></label>
           <button class="primary" id="policy-save">Save</button>
         </form>
-        <p class="muted small">Every sync that changes your data saves a version of <code>dulieu.txt</code>, in its Google Drive version history. Each day keeps its newest versions, and the most recent saved days are kept. Days with nothing saved don't count, however long ago. At most <span id="max-versions">180</span> versions in all: Drive keeps up to 200 per file.</p>
+        <p class="muted small">Every sync that changes your data saves a version of <code>dulieu.txt</code>, in its Google Drive version history. Each day keeps its newest versions, and the most recent saved days are kept. Days with nothing saved don't count, however long ago. At most <span id="max-versions">180</span> versions in all: Drive keeps up to 200 per file forever. <b>Temporary</b> versions (saved before they were kept forever) are listed too; Drive deletes those itself after 30 days.</p>
         <div id="versions" class="versions" role="radiogroup" aria-label="Versions"></div>
-        <p class="error small" id="backups-error"></p>
+        <p class="error small" id="versions-error"></p>
         <div class="row">
-          <button type="button" id="backup-now">Back up now</button>
+          <button type="button" id="version-save-now">Save a version now</button>
           <span class="grow"></span>
           <button type="button" id="version-download" disabled>Download</button>
           <button type="button" id="version-delete" class="danger" disabled>Delete</button>

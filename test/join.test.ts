@@ -50,9 +50,9 @@ test("same book: the further chapter wins, even when the joining browser read it
   expect(pa.books()).toEqual(["100@50"]);
   expect(pb.books()).toEqual(["100@50"]);
   // B's own chapter is kept as a version, in case it mattered.
-  const join = (await a.engine.backups()).versions.find((v) => v.reason === "join");
+  const join = (await a.engine.versions()).versions.find((v) => v.reason === "join");
   expect(join?.books).toBe(1);
-  expect(await a.engine.downloadBackup(join!.id)).toContain("Chương 3");
+  expect(await a.engine.downloadVersion(join!.id)).toContain("Chương 3");
 });
 
 test("same book: a joining browser that read further brings its chapter", async () => {
@@ -89,8 +89,8 @@ test("names: a term the account already translates keeps the account's translati
   );
   expect(pa.names(N)).toEqual(["$伊莱=Y Lai"]);
   expect(pb.names(N)).toEqual(["$伊莱=Y Lai"]);
-  const join = (await a.engine.backups()).versions.find((v) => v.reason === "join");
-  expect(await a.engine.downloadBackup(join!.id)).toContain("Elai");
+  const join = (await a.engine.versions()).versions.find((v) => v.reason === "join");
+  expect(await a.engine.downloadVersion(join!.id)).toContain("Elai");
 });
 
 test("names: the site's appended edits leave one line per term, the last one", async () => {

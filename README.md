@@ -37,13 +37,13 @@ service worker      background.js
   - `changes-<id>-<n>.json`: one per sync with changes, holding only the changed items (a chapter read is a few hundred bytes). Other browsers download only the ones they haven't merged.
   - `device-<id>.json`: all the data as of change *n*. Every 30 changes the change files are folded into it and deleted. A browser further behind than the change files reach reads this file instead.
   - Browsers on an older version of the extension still sync: they read and write the whole device file as before.
-- **dulieu.txt and backups** are written after the page is updated, so they don't delay the sync. A browser that only received changes writes neither. Backup versions are dulieu.txt's own Drive revisions, uploaded with "keep forever", so the data goes up once per change. Drive's **Manage versions** on dulieu.txt shows them too, each named after the browser and what it holds.
+- **dulieu.txt and its versions** are written after the page is updated, so they don't delay the sync. A browser that only received changes writes neither. Versions are dulieu.txt's own Drive revisions, uploaded with "keep forever" (and marked so afterwards if Drive did not), so the data goes up once per change. Drive's **Manage versions** on dulieu.txt shows them too, each named after the browser and what it holds.
 - **One translation per term.** The site uses one line per name term (`$伊莱=…`), so a list keeps one line per term, the newest change. That covers the site appending a renamed name and two browsers renaming the same term.
 - **A browser joining** (first sync, or a page whose site data was cleared) is merged against the account's data and deletes nothing:
   - Books only one side has, and names only one side has, end up on both.
   - The same book on both: the further chapter wins.
   - A name term the account already translates differently: the account's translation stays.
-  - Whatever the joining browser loses that way is saved first as a backup version ("its own data before joining"). It goes with its day, but doesn't count toward versions per day or saved days.
+  - Whatever the joining browser loses that way is saved first as a version ("its own data before joining"). It goes with its day, but doesn't count toward versions per day or saved days.
 - **Open pages stay consistent:** when synced names arrive for the chapter you have open, the name editor is updated, so the site's next save cannot drop them. On the home page, the history list redraws itself. A toast offers a reload.
 - **Google sign-in:** `chrome.identity.launchWebAuthFlow` with scope `drive.file`, so the extension only sees files it created. Tokens are renewed silently. When Google wants you back, the popup shows **Sign in again**.
 
@@ -83,11 +83,12 @@ Settings: domains (adding one asks for access to it), the OAuth client ID, and *
 - **Rename** it. Another browser takes the new name at its next sync.
 - **Remove** it. Its file goes to the Drive trash, and anything it already synced stays. That browser stops syncing with the account until it is linked again from its own popup. "Remove this browser" does the same for the current browser.
 
-**Backups** keeps versions of the account's data in its Drive, as the version history of `SangTacViet Sync/dulieu.txt` (site format), like a Google Doc's. The card shows the policy; click it to manage versions:
+**Versions** keeps the account's data history in its Drive, as the version history of `SangTacViet Sync/dulieu.txt` (site format), like a Google Doc's. The card shows the policy; click it to manage versions:
 
 - Every sync that changes the data saves a version. Each day keeps its newest **versions per day** (default 2). **Saved days to keep** (default 7) counts only days that have versions: days with nothing saved are skipped, so 7 saved days keep up to 14 versions however far apart they are. At most 180 versions in all, since Drive keeps up to 200 per file forever. The policy is stored on the Drive folder, so all browsers on the account share it.
-- Pick a version to **Restore** it, **Download** it as `.txt`, or **Delete** it. Restore replaces the data in every browser on the account; the data it replaces stays as a version. The current version is dulieu.txt itself and can't be deleted.
-- A joining browser's own data, and versions saved by older versions of the extension, are separate `backup …txt` files in the folder. They are listed and rotated the same way.
+- Pick a version to **Restore** it, **Download** it as `.txt`, or **Delete** it. Restore replaces the data in every browser on the account; the data it replaces stays as a version. The **latest** version is dulieu.txt itself and can't be deleted.
+- The list shows every version Drive shows under **Manage versions**, including **temporary** ones (not kept forever, e.g. uploaded by an older release). Those can be downloaded, restored and deleted too; the policy leaves them to Drive, which deletes them 30 days after a newer version, or sooner past 100.
+- A joining browser's own data, and versions saved by older versions of the extension, are separate files in the folder (`dulieu before joining - …txt`, older `backup …txt`). They are listed and rotated the same way.
 - Deleting dulieu.txt from Drive deletes its versions with it.
 - The list refreshes on its own.
 
@@ -103,13 +104,13 @@ bun run test/fake-drive.ts 8787 [--file state.json]   # fake Drive for manual/br
 | `manifest.json` | the extension manifest; the repo root is the unpacked extension |
 | `src/shared/sitedata.ts` | the site's data format, name-key rule |
 | `src/shared/model.ts` | items, merge, diff (pure) |
-| `src/shared/engine.ts` | one sync round against Drive, backup versions |
+| `src/shared/engine.ts` | one sync round against Drive, versions |
 | `src/shared/drive.ts` | Drive v3 calls |
-| `src/shared/backups.ts` | backup policy and rotation (pure) |
+| `src/shared/versions.ts` | version policy and rotation (pure) |
 | `src/background/` | service worker: auth, settings, scheduling, content-script registration |
 | `src/content/` | `hook.ts` (page world), `bridge.ts` (content script) |
-| `src/ui/` | popup, settings page (`backups.ts`: the Backups card and dialog) |
-| `test/` | merge, engine, join, change-file (`journal.test.ts`) and backup tests against `fake-drive.ts` |
+| `src/ui/` | popup, settings page (`versions.ts`: the Versions card and dialog) |
+| `test/` | merge, engine, join, change-file (`journal.test.ts`) and version tests against `fake-drive.ts` |
 
 Limits:
 

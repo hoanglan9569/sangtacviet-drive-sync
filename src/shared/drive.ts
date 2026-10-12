@@ -1,7 +1,7 @@
 /**
  * The few Google Drive v3 calls the sync needs. The `drive.file` scope only
  * shows files this app created, so files are found by their appProperties
- * (stvSync = root | device | ops | export | backup), never by name. Backup versions are
+ * (stvSync = root | device | ops | export | backup), never by name. Versions are
  * dulieu.txt's own revisions, kept forever.
  */
 
@@ -182,6 +182,15 @@ export class Drive {
 
   async downloadRevision(fileId: string, revisionId: string): Promise<string> {
     return (await this.call(`/drive/v3/files/${encodeURIComponent(fileId)}/revisions/${encodeURIComponent(revisionId)}?alt=media`)).text();
+  }
+
+  /** Marks a revision to be kept forever (at most 200 per file), or temporary again. */
+  async keepRevision(fileId: string, revisionId: string, keepForever: boolean): Promise<void> {
+    await this.call(`/drive/v3/files/${encodeURIComponent(fileId)}/revisions/${encodeURIComponent(revisionId)}?fields=id`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json; charset=UTF-8" },
+      body: JSON.stringify({ keepForever }),
+    });
   }
 
   /** Deletes a revision for good; Drive refuses the current one. */

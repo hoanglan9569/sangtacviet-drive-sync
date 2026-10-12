@@ -1,20 +1,20 @@
 /**
- * Settings page "Backups": a one-line card; a click opens a dialog with the
+ * Settings page "Versions": a one-line card; a click opens a dialog with the
  * policy (versions per day, saved days kept) and the versions (dulieu.txt's
  * version history), where one can be picked to restore, download or delete.
  * Both stay current on their own.
  */
-import { type BackupPolicy, type BackupVersion, MAX_VERSIONS } from "../shared/backups";
+import { type VersionPolicy, type Version, MAX_VERSIONS } from "../shared/versions";
 import type { Status } from "../shared/messages";
 import { ago, busy, call, h } from "./common";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const dialog = $<HTMLDialogElement>("backups");
+const dialog = $<HTMLDialogElement>("versions-dialog");
 const perDay = $<HTMLInputElement>("per-day");
 const days = $<HTMLInputElement>("days");
 
 let status: Status | undefined;
-let data: { sub: string; policy: BackupPolicy; versions: BackupVersion[] } | undefined;
+let data: { sub: string; policy: VersionPolicy; versions: Version[] } | undefined;
 let error = "";
 let selected: string | undefined;
 /** The policy inputs were edited and not saved yet: refreshes leave them alone. */
@@ -22,8 +22,13 @@ let editing = false;
 
 const account = () => status?.accounts.find((a) => a.sub === status?.active);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** " (3 temporary)" when some versions are not kept forever. */
+const temporary = (list: Version[]) => {
+  const n = list.filter((v) => v.temporary).length;
+  return n ? ` (${n} temporary)` : "";
+};
 /** "12 books · 340 names", or the size when Drive did not keep the counts. */
-const what = (v: BackupVersion) =>
+const what = (v: Version) =>
   v.books !== undefined && v.names !== undefined
     ? `${plural(v.books, "book")} · ${plural(v.names, "name")}`
     : v.size !== undefined
@@ -43,12 +48,12 @@ function dayLabel(day: string): string {
 
 let inFlight: Promise<void> | undefined;
 /** Lists the versions from Drive again, then redraws. */
-export function refreshBackups(): Promise<void> {
+export function refreshVersions(): Promise<void> {
   inFlight ??= (async () => {
     try {
       status = await call<Status>({ type: "status" });
       const sub = status.active;
-      data = sub ? { sub, ...(await call<{ policy: BackupPolicy; versions: BackupVersion[] }>({ type: "backups" })) } : undefined;
+      data = sub ? { sub, ...(await call<{ policy: VersionPolicy; versions: Version[] }>({ type: "versions" })) } : undefined;
       error = "";
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -65,24 +70,24 @@ function render(): void {
   if (selected && !versions.some((v) => v.id === selected)) selected = undefined;
 
   // The card: one line of policy, one of state.
-  const summary = $("backups-summary");
-  if (!a) summary.textContent = "Connect a Google account in the popup to keep backup versions.";
+  const summary = $("versions-summary");
+  if (!a) summary.textContent = "Connect a Google account in the popup to keep versions.";
   else if (error && !data) summary.replaceChildren(h("span", { class: "error" }, error));
   else
     summary.replaceChildren(
       policy ? `${plural(policy.perDay, "version")} a day · last ${plural(policy.days, "saved day")}` : "…",
       h("br"),
-      versions.length ? `${plural(versions.length, "version")} · newest ${ago(versions[0]!.at)}` : a.linked ? "No versions yet: the next sync saves one." : "Start syncing this account to keep versions.",
+      versions.length ? `${plural(versions.length, "version")}${temporary(versions)} · newest ${ago(versions[0]!.at)}` : a.linked ? "No versions yet: the next sync saves one." : "Start syncing this account to keep versions.",
     );
 
   // The dialog.
-  $("backups-account").textContent = a ? `Versions of ${a.email}'s data, kept in its Google Drive.` : "";
+  $("versions-account").textContent = a ? `Versions of ${a.email}'s data, kept in its Google Drive.` : "";
   if (policy && !editing) {
     perDay.value = String(policy.perDay);
     days.value = String(policy.days);
   }
-  $("backups-error").textContent = error;
-  const groups = new Map<string, BackupVersion[]>();
+  $("versions-error").textContent = error;
+  const groups = new Map<string, Version[]>();
   for (const v of versions) groups.set(v.day, [...(groups.get(v.day) ?? []), v]);
   $("versions").replaceChildren(
     ...(versions.length ? [] : [h("p", { class: "muted small" }, "No versions yet.")]),
@@ -98,7 +103,8 @@ function render(): void {
             "small",
             { class: "muted" },
             [
-              v.current ? "current" : "",
+              v.current ? "latest" : "",
+              v.temporary ? "temporary" : "",
               what(v),
               v.deviceName,
               v.reason === "manual" ? "saved by hand" : v.reason === "restore" ? "saved before a restore" : v.reason === "join" ? "its own data before joining" : "",
@@ -114,9 +120,9 @@ function render(): void {
   for (const id of ["version-download", "version-delete", "version-restore"]) $<HTMLButtonElement>(id).disabled = none;
   const current = !!chosen()?.current;
   $<HTMLButtonElement>("version-delete").disabled = none || current;
-  $<HTMLButtonElement>("version-delete").title = current ? "This is dulieu.txt's current content; it goes once newer versions replace it." : "";
+  $<HTMLButtonElement>("version-delete").title = current ? "The latest version is dulieu.txt's current content and can't be deleted." : "";
   $<HTMLButtonElement>("version-restore").disabled = none || !a?.linked;
-  $<HTMLButtonElement>("backup-now").disabled = !a?.linked;
+  $<HTMLButtonElement>("version-save-now").disabled = !a?.linked;
   $<HTMLButtonElement>("policy-save").disabled = !a;
 }
 
@@ -125,20 +131,20 @@ function select(id: string): void {
   render();
 }
 
-const fail = (e: string) => ($("backups-error").textContent = e);
+const fail = (e: string) => ($("versions-error").textContent = e);
 const chosen = () => data?.versions.find((v) => v.id === selected);
-const when = (v: BackupVersion) => `${dayLabel(v.day).toLowerCase()} at ${time(v.at)}`;
+const when = (v: Version) => `${dayLabel(v.day).toLowerCase()} at ${time(v.at)}`;
 
 function open(): void {
   editing = false;
   render();
   dialog.showModal();
-  void refreshBackups();
+  void refreshVersions();
 }
 
-$("backups-card").addEventListener("click", open);
-$("backups-card").addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), open()));
-$("backups-close").addEventListener("click", () => dialog.close());
+$("versions-card").addEventListener("click", open);
+$("versions-card").addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), open()));
+$("versions-close").addEventListener("click", () => dialog.close());
 dialog.addEventListener("click", (e) => e.target === dialog && dialog.close());
 for (const input of [perDay, days]) input.addEventListener("input", () => (editing = true));
 $("max-versions").textContent = String(MAX_VERSIONS);
@@ -150,16 +156,16 @@ $("policy-form").addEventListener("submit", (e) => {
   const fewer = old && (policy.perDay < old.perDay || policy.days < old.days);
   if (fewer && !confirm("Keep fewer versions? Versions beyond the new limits are deleted now.")) return;
   void busy($<HTMLButtonElement>("policy-save"), "Saving…", async () => {
-    await call({ type: "setBackupPolicy", policy });
+    await call({ type: "setVersionPolicy", policy });
     editing = false;
-    await refreshBackups();
+    await refreshVersions();
   }, fail);
 });
 
-$("backup-now").addEventListener("click", (e) =>
+$("version-save-now").addEventListener("click", (e) =>
   void busy(e.currentTarget as HTMLButtonElement, "Saving…", async () => {
-    await call({ type: "backupNow" });
-    await refreshBackups();
+    await call({ type: "saveVersion" });
+    await refreshVersions();
   }, fail),
 );
 
@@ -167,7 +173,7 @@ $("version-download").addEventListener("click", (e) => {
   const v = chosen();
   if (!v) return;
   void busy(e.currentTarget as HTMLButtonElement, "…", async () => {
-    const text = await call<string>({ type: "downloadBackup", id: v.id });
+    const text = await call<string>({ type: "downloadVersion", id: v.id });
     const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
     h("a", { href: url, download: `dulieu-${v.day}-${new Date(v.at).toTimeString().slice(0, 5).replace(":", "")}.txt` }).click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
@@ -178,8 +184,8 @@ $("version-delete").addEventListener("click", (e) => {
   const v = chosen();
   if (!v || !confirm(`Delete the version from ${when(v)}? This cannot be undone.`)) return;
   void busy(e.currentTarget as HTMLButtonElement, "Deleting…", async () => {
-    await call({ type: "deleteBackup", id: v.id });
-    await refreshBackups();
+    await call({ type: "deleteVersion", id: v.id });
+    await refreshVersions();
   }, fail);
 });
 
@@ -188,11 +194,11 @@ $("version-restore").addEventListener("click", (e) => {
   if (!v) return;
   const question =
     `Restore the version from ${when(v)}${what(v) ? ` (${what(v).replace(" · ", ", ")})` : ""}?\n\n` +
-    "Reading history and names in every browser on this account are replaced by it. The current data is saved as a version first.";
+    "Reading history and names in every browser on this account are replaced by it. The data it replaces stays as a version.";
   if (!confirm(question)) return;
   void busy(e.currentTarget as HTMLButtonElement, "Restoring…", async () => {
-    await call({ type: "restoreBackup", id: v.id });
-    await refreshBackups();
+    await call({ type: "restoreVersion", id: v.id });
+    await refreshVersions();
   }, fail);
 });
 
@@ -201,8 +207,8 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !Object.keys(changes).some((k) => k === "settings" || k.startsWith("remote:"))) return;
   clearTimeout(timer);
-  timer = setTimeout(() => void refreshBackups(), 1000);
+  timer = setTimeout(() => void refreshVersions(), 1000);
 });
-document.addEventListener("visibilitychange", () => !document.hidden && void refreshBackups());
-setInterval(() => !document.hidden && void refreshBackups(), 60_000);
-void refreshBackups();
+document.addEventListener("visibilitychange", () => !document.hidden && void refreshVersions());
+setInterval(() => !document.hidden && void refreshVersions(), 60_000);
+void refreshVersions();

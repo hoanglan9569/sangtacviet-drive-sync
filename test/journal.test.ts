@@ -75,8 +75,8 @@ test("a backup version is a revision of dulieu.txt, kept forever: the data goes 
   expect(drive.log.filter((l) => l.startsWith("POST /upload") || l.startsWith("PATCH /upload"))).toHaveLength(2); // change file, dulieu.txt
   const [exp] = drive.byKind("export");
   expect(exp!.revisions!.at(-1)!.keepForever).toBe(true);
-  const { versions } = await a.engine.backups();
-  expect(await a.engine.downloadBackup(versions[0]!.id)).toBe(exp!.content);
+  const { versions } = await a.engine.versions();
+  expect(await a.engine.downloadVersion(versions[0]!.id)).toBe(exp!.content);
 });
 
 test(`after ${COMPACT_AT} change files they are folded into the device file`, async () => {

@@ -2,7 +2,7 @@ import { DEFAULT_DOMAINS, domainPatterns, getSettings, updateSettings } from "..
 import type { RemoteDevice } from "../shared/engine";
 import type { Status } from "../shared/messages";
 import { ago, busy, call, h } from "./common";
-import "./backups";
+import "./versions";
 import { themeToggle } from "./theme";
 
 themeToggle(document.getElementById("theme")!);

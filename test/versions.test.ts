@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { type BackupVersion, MAX_VERSIONS, clampPolicy, dayOf, toPrune } from "../src/shared/backups";
+import { type Version, MAX_VERSIONS, clampPolicy, dayOf, toPrune } from "../src/shared/versions";
 import { FakeDrive } from "./fake-drive";
 import { Clock, FakePage, device } from "./helpers";
 
@@ -16,7 +16,7 @@ const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
 const N = "qidian100";
 
-const v = (id: string, at: number, reason: BackupVersion["reason"] = "auto"): BackupVersion => ({ id, at, day: dayOf(at), deviceName: "", reason });
+const v = (id: string, at: number, reason: Version["reason"] = "auto"): Version => ({ id, at, day: dayOf(at), deviceName: "", reason });
 
 test("toPrune keeps each saved day's newest versions, for the last N days that have any", () => {
   const now = new Date(2027, 0, 15, 20).getTime();
@@ -56,7 +56,7 @@ test("the policy stays within what Drive keeps forever", () => {
 test("every sync that changes the data saves a version of dulieu.txt; each day keeps its newest", async () => {
   const a = device(drive, "A", clock);
   const page = new FakePage(undefined, clock);
-  const count = async () => (await a.engine.backups()).versions.length;
+  const count = async () => (await a.engine.versions()).versions.length;
   page.read_("qidian", "100", 1);
   await a.engine.sync(page, page.times);
   expect(await count()).toBe(1);
@@ -76,16 +76,16 @@ test("every sync that changes the data saves a version of dulieu.txt; each day k
     page.read_("qidian", "100", chap);
     await a.engine.sync(page, page.times);
   }
-  const { versions, policy } = await a.engine.backups();
+  const { versions, policy } = await a.engine.versions();
   expect(policy).toEqual({ perDay: 2, days: 7 });
   expect(versions).toHaveLength(2);
   expect(versions[0]).toMatchObject({ current: true, deviceName: "A", books: 1, names: 0 });
-  expect(await a.engine.downloadBackup(versions[0]!.id)).toContain("Chương 5");
-  expect(await a.engine.downloadBackup(versions[1]!.id)).toContain("Chương 4");
+  expect(await a.engine.downloadVersion(versions[0]!.id)).toContain("Chương 5");
+  expect(await a.engine.downloadVersion(versions[1]!.id)).toContain("Chương 4");
 
-  await a.engine.setBackupPolicy({ perDay: 1, days: 3 });
-  expect((await a.engine.backups()).policy).toEqual({ perDay: 1, days: 3 });
-  expect((await a.engine.backups()).versions).toHaveLength(1);
+  await a.engine.setVersionPolicy({ perDay: 1, days: 3 });
+  expect((await a.engine.versions()).policy).toEqual({ perDay: 1, days: 3 });
+  expect((await a.engine.versions()).versions).toHaveLength(1);
 });
 
 test("restoring a version brings it back in every browser, and saves the current data first", async () => {
@@ -97,8 +97,8 @@ test("restoring a version brings it back in every browser, and saves the current
   pa.addName(N, "$伊莱=Y Lai");
   await a.engine.sync(pa, pa.times);
   await b.engine.sync(pb, pb.times);
-  const good = (await a.engine.backups()).versions[0]!;
-  const goodText = await a.engine.downloadBackup(good.id);
+  const good = (await a.engine.versions()).versions[0]!;
+  const goodText = await a.engine.downloadVersion(good.id);
 
   // Something goes wrong: history emptied, a bad name added.
   clock.tick(10 * 60 * 1000);
@@ -110,7 +110,7 @@ test("restoring a version brings it back in every browser, and saves the current
   expect(pa.books()).toEqual([]);
 
   clock.tick();
-  await a.engine.restoreBackup(good.id);
+  await a.engine.restoreVersion(good.id);
   await a.engine.sync(pa, pa.times);
   expect(pa.books()).toEqual(["100@5"]);
   expect(pa.names(N)).toEqual(["$伊莱=Y Lai"]);
@@ -119,11 +119,11 @@ test("restoring a version brings it back in every browser, and saves the current
   expect(pb.books()).toEqual(["100@5"]);
   expect(pb.names(N)).toEqual(["$伊莱=Y Lai"]);
 
-  const { versions } = await a.engine.backups();
+  const { versions } = await a.engine.versions();
   // dulieu.txt holds the restored data again; the data it replaced stays as a version.
   expect(versions[0]!.current).toBe(true);
-  expect(await a.engine.downloadBackup(versions[0]!.id)).toBe(goodText);
-  const texts = await Promise.all(versions.map((v) => a.engine.downloadBackup(v.id)));
+  expect(await a.engine.downloadVersion(versions[0]!.id)).toBe(goodText);
+  const texts = await Promise.all(versions.map((v) => a.engine.downloadVersion(v.id)));
   expect(texts.some((t) => t.includes("Xấu"))).toBe(true);
 });
 
@@ -136,12 +136,12 @@ test("a version can be deleted and downloaded in the site's format", async () =>
   clock.tick(60 * 1000);
   page.read_("qidian", "100", 6);
   await a.engine.sync(page, page.times);
-  const [current, older] = (await a.engine.backups()).versions;
-  expect(JSON.parse(await a.engine.downloadBackup(older!.id)).tusach).toBe(before);
-  await a.engine.deleteBackup(older!.id);
-  expect((await a.engine.backups()).versions.map((v) => v.id)).toEqual([current!.id]);
+  const [current, older] = (await a.engine.versions()).versions;
+  expect(JSON.parse(await a.engine.downloadVersion(older!.id)).tusach).toBe(before);
+  await a.engine.deleteVersion(older!.id);
+  expect((await a.engine.versions()).versions.map((v) => v.id)).toEqual([current!.id]);
   // dulieu.txt's current content cannot be deleted.
-  expect(a.engine.deleteBackup(current!.id)).rejects.toThrow();
+  expect(a.engine.deleteVersion(current!.id)).rejects.toThrow();
 });
 
 test("backup files from before still show, and rotate out", async () => {
@@ -158,7 +158,65 @@ test("backup files from before still show, and rotate out", async () => {
       "text/plain",
     );
   for (const d of [1, 2, 3]) await old(d);
-  expect((await a.engine.backups()).versions.map((v) => v.books)).toEqual([1, 7, 7, 7]);
-  await a.engine.setBackupPolicy({ perDay: 2, days: 2 });
-  expect((await a.engine.backups()).versions.map((v) => v.books)).toEqual([1, 7]);
+  expect((await a.engine.versions()).versions.map((v) => v.books)).toEqual([1, 7, 7, 7]);
+  await a.engine.setVersionPolicy({ perDay: 2, days: 2 });
+  expect((await a.engine.versions()).versions.map((v) => v.books)).toEqual([1, 7]);
+});
+
+test("temporary revisions (not kept forever) are listed like Drive lists them, downloadable and deletable, and left to Drive by the policy", async () => {
+  const a = device(drive, "A", clock);
+  const page = new FakePage(undefined, clock);
+  page.read_("qidian", "100", 1);
+  await a.engine.sync(page, page.times);
+  // What an older release, or Drive ignoring the flag, leaves: revisions not kept forever.
+  const { Drive } = await import("../src/shared/drive");
+  const api = new Drive(async () => "t", drive.url);
+  const exp = drive.byKind("export")[0]!;
+  for (const n of [1, 2, 3]) {
+    clock.tick(60_000);
+    await api.update(exp.id, `{"name":{},"tusach":"old ${n}"}`, "text/plain", { appProperties: { hash: `old${n}` } });
+  }
+  let { versions } = await a.engine.versions();
+  expect(versions.map((v) => [v.current ?? false, v.temporary])).toEqual([
+    [true, true],
+    [false, true],
+    [false, true],
+    [false, false],
+  ]);
+  // Downloading a temporary one keeps it only for the download.
+  expect(await a.engine.downloadVersion(versions[2]!.id)).toContain("old 1");
+  expect((await a.engine.versions()).versions[2]!.temporary).toBe(true);
+  await a.engine.deleteVersion(versions[2]!.id);
+  expect((await a.engine.versions()).versions).toHaveLength(3);
+
+  // The next version this browser saves is kept forever; the policy (1 a day) leaves temporary ones alone.
+  await a.engine.setVersionPolicy({ perDay: 1, days: 1 });
+  clock.tick(60_000);
+  page.read_("qidian", "100", 2);
+  await a.engine.sync(page, page.times);
+  versions = (await a.engine.versions()).versions;
+  expect(versions[0]).toMatchObject({ current: true, temporary: false });
+  expect(versions.filter((v) => v.temporary)).toHaveLength(2);
+  expect(versions.filter((v) => !v.temporary)).toHaveLength(1);
+});
+
+test("each new version ends up kept forever, even if Drive ignored the upload's flag; the latest can never be deleted", async () => {
+  const a = device(drive, "A", clock);
+  const page = new FakePage(undefined, clock);
+  drive.honourKeep = false;
+  try {
+    for (const chap of [1, 2]) {
+      clock.tick(60_000);
+      page.read_("qidian", "100", chap);
+      await a.engine.sync(page, page.times);
+    }
+  } finally {
+    drive.honourKeep = true;
+  }
+  const { versions } = await a.engine.versions();
+  expect(versions.map((v) => v.temporary)).toEqual([false, false]);
+  expect(versions[0]!.current).toBe(true);
+  expect(a.engine.deleteVersion(versions[0]!.id)).rejects.toThrow("can't be deleted");
+  await a.engine.deleteVersion(versions[1]!.id);
+  expect((await a.engine.versions()).versions).toHaveLength(1);
 });
