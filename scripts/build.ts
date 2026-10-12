@@ -1,5 +1,6 @@
 /**
- * Builds the unpacked extension into dist/.
+ * Builds the extension's scripts and pages into dist/. The repo root is the
+ * unpacked extension: manifest.json there points into dist/.
  *
  *   bun run build
  *
@@ -44,6 +45,6 @@ for (const f of STATIC) cpSync(join(SRC, f), join(OUT, f.split("/").pop()!));
 cpSync(join(SRC, "icons"), join(OUT, "icons"), { recursive: true });
 
 const { version } = (await Bun.file(join(ROOT, "package.json")).json()) as { version: string };
-const manifest = (await Bun.file(join(SRC, "manifest.json")).json()) as Record<string, unknown>;
-await Bun.write(join(OUT, "manifest.json"), JSON.stringify({ ...manifest, version }, null, 2));
-console.log(`extension -> ${OUT}${clientId ? "" : "  (no STV_GOOGLE_CLIENT_ID: set the client ID in Settings)"}`);
+const manifest = (await Bun.file(join(ROOT, "manifest.json")).json()) as { version: string };
+if (manifest.version !== version) throw new Error(`manifest.json version ${manifest.version} != package.json ${version}`);
+console.log(`extension -> ${OUT} (load unpacked: ${ROOT})${clientId ? "" : "  (no STV_GOOGLE_CLIENT_ID: set the client ID in Settings)"}`);

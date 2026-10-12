@@ -43,10 +43,10 @@ Building needs [Bun](https://bun.sh).
 
 ```powershell
 bun install
-bun run build          # -> dist
+bun run build          # scripts and pages -> dist/
 ```
 
-1. `chrome://extensions` → Developer mode → **Load unpacked** → `dist`. The ID is fixed by the manifest `key`: `dkgknammpnaadehadhbojamiogakmnhh`.
+1. `chrome://extensions` → Developer mode → **Load unpacked** → this repo's folder (its `manifest.json` points into `dist/`). The ID is fixed by the manifest `key`: `dkgknammpnaadehadhbojamiogakmnhh`.
 2. Create a Google OAuth client (once):
    - [console.cloud.google.com](https://console.cloud.google.com) → new project → enable **Google Drive API**.
    - **Google Auth Platform** → Get started: app name, support email, audience **External**, contact email.
@@ -79,6 +79,7 @@ bun run test/fake-drive.ts 8787 [--file state.json]   # fake Drive for manual/br
 
 | Path | |
 | --- | --- |
+| `manifest.json` | the extension manifest; the repo root is the unpacked extension |
 | `src/shared/sitedata.ts` | the site's data format, name-key rule |
 | `src/shared/model.ts` | items, merge, diff (pure) |
 | `src/shared/engine.ts` | one sync round against Drive |
