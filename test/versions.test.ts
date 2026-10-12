@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { type Version, MAX_VERSIONS, clampPolicy, dayOf, toPrune } from "../src/shared/versions";
+import { type Version, KEEP_FOREVER, dayOf, toRelease } from "../src/shared/versions";
 import { FakeDrive } from "./fake-drive";
 import { Clock, FakePage, device } from "./helpers";
 
@@ -12,48 +12,18 @@ beforeEach(() => {
   drive.now = clock.now;
 });
 
-const HOUR = 3600 * 1000;
-const DAY = 24 * HOUR;
 const N = "qidian100";
 
-const v = (id: string, at: number, reason: Version["reason"] = "auto"): Version => ({ id, at, day: dayOf(at), deviceName: "", reason });
+const rev = (n: number, extra: Partial<Version> = {}): Version => ({ id: `rev:f:r${n}`, at: n, day: dayOf(n), deviceName: "", reason: "auto", ...extra });
 
-test("toPrune keeps each saved day's newest versions, for the last N days that have any", () => {
-  const now = new Date(2027, 0, 15, 20).getTime();
-  const versions = [
-    v("today-3", now - 1 * HOUR),
-    v("today-2", now - 2 * HOUR),
-    v("today-1", now - 3 * HOUR),
-    v("6-days-ago", now - 6 * DAY),
-    v("7-days-ago", now - 7 * DAY),
-  ];
-  // Only 3 saved days: nothing is too old, only today's third version goes.
-  expect(toPrune(versions, { perDay: 2, days: 7 }).map((x) => x.id)).toEqual(["today-1"]);
-  expect(toPrune(versions, { perDay: 2, days: 2 }).map((x) => x.id)).toEqual(["today-1", "7-days-ago"]);
+test(`past ${KEEP_FOREVER} versions kept forever, the oldest become temporary; never the latest, temporary ones or files`, () => {
+  const kept = Array.from({ length: KEEP_FOREVER + 3 }, (_, i) => rev(i + 1, { current: i === KEEP_FOREVER + 2 }));
+  const others = [rev(0, { temporary: true }), { ...rev(-1), id: "file1", reason: "join" as const }];
+  expect(toRelease([...kept, ...others]).map((v) => v.id)).toEqual(["rev:f:r3", "rev:f:r2", "rev:f:r1"]);
+  expect(toRelease(kept.slice(0, KEEP_FOREVER))).toEqual([]);
 });
 
-test("days without versions do not count: 7 saved days years apart are all kept", () => {
-  const start = new Date(2020, 0, 1, 12).getTime();
-  const versions = Array.from({ length: 8 }, (_, d) => [v(`d${d}-a`, start + d * 365 * DAY), v(`d${d}-b`, start + d * 365 * DAY + HOUR)]).flat();
-  // 8 saved days, a year apart: the oldest day goes, the other 7 days keep both versions (14).
-  const pruned = toPrune(versions, { perDay: 2, days: 7 }).map((x) => x.id);
-  expect(pruned.sort()).toEqual(["d0-a", "d0-b"]);
-  expect(versions.length - pruned.length).toBe(14);
-});
-
-test("join versions neither count toward a day nor make a day count", () => {
-  const now = new Date(2027, 0, 15, 20).getTime();
-  const versions = [v("today", now), v("join-today", now - HOUR, "join"), v("join-old", now - 30 * DAY, "join"), v("yesterday", now - DAY)];
-  expect(toPrune(versions, { perDay: 1, days: 2 }).map((x) => x.id)).toEqual([]);
-  expect(toPrune(versions, { perDay: 1, days: 1 }).map((x) => x.id)).toEqual(["yesterday", "join-old"]);
-});
-
-test("the policy stays within what Drive keeps forever", () => {
-  expect(clampPolicy({ perDay: 24, days: 365 })).toEqual({ perDay: 24, days: Math.floor(MAX_VERSIONS / 24) });
-  expect(clampPolicy({ perDay: 1, days: 365 }).days).toBe(MAX_VERSIONS);
-});
-
-test("every sync that changes the data saves a version of dulieu.txt; each day keeps its newest", async () => {
+test("every sync that changes the data saves a version of dulieu.txt, kept forever", async () => {
   const a = device(drive, "A", clock);
   const page = new FakePage(undefined, clock);
   const count = async () => (await a.engine.versions()).versions.length;
@@ -66,28 +36,18 @@ test("every sync that changes the data saves a version of dulieu.txt; each day k
   await a.engine.sync(page, page.times);
   expect(await count()).toBe(1); // nothing changed
 
-  clock.tick(60 * 1000);
-  page.read_("qidian", "100", 2);
-  await a.engine.sync(page, page.times);
-  expect(await count()).toBe(2); // a minute later, still saved
-
-  for (let chap = 3; chap <= 5; chap++) {
+  for (let chap = 2; chap <= 5; chap++) {
     clock.tick(60 * 1000);
     page.read_("qidian", "100", chap);
     await a.engine.sync(page, page.times);
   }
-  const { versions, policy } = await a.engine.versions();
-  expect(policy).toEqual({ perDay: 2, days: 7 });
-  expect(versions).toHaveLength(2);
+  const { versions } = await a.engine.versions();
+  expect(versions).toHaveLength(5);
+  expect(versions.every((v) => !v.temporary)).toBe(true);
   expect(versions[0]).toMatchObject({ current: true, deviceName: "A", books: 1, names: 0 });
   expect(await a.engine.downloadVersion(versions[0]!.id)).toContain("Chương 5");
-  expect(await a.engine.downloadVersion(versions[1]!.id)).toContain("Chương 4");
-
-  await a.engine.setVersionPolicy({ perDay: 1, days: 3 });
-  expect((await a.engine.versions()).policy).toEqual({ perDay: 1, days: 3 });
-  expect((await a.engine.versions()).versions).toHaveLength(1);
+  expect(await a.engine.downloadVersion(versions[4]!.id)).toContain("Chương 1");
 });
-
 test("restoring a version brings it back in every browser, and saves the current data first", async () => {
   const a = device(drive, "A", clock);
   const b = device(drive, "B", clock);
@@ -144,7 +104,7 @@ test("a version can be deleted and downloaded in the site's format", async () =>
   expect(a.engine.deleteVersion(current!.id)).rejects.toThrow();
 });
 
-test("backup files from before still show, and rotate out", async () => {
+test("version files from older releases still show", async () => {
   const a = device(drive, "A", clock);
   const page = new FakePage(undefined, clock);
   page.read_("qidian", "100", 1);
@@ -159,11 +119,9 @@ test("backup files from before still show, and rotate out", async () => {
     );
   for (const d of [1, 2, 3]) await old(d);
   expect((await a.engine.versions()).versions.map((v) => v.books)).toEqual([1, 7, 7, 7]);
-  await a.engine.setVersionPolicy({ perDay: 2, days: 2 });
-  expect((await a.engine.versions()).versions.map((v) => v.books)).toEqual([1, 7]);
 });
 
-test("temporary revisions (not kept forever) are listed like Drive lists them, downloadable and deletable, and left to Drive by the policy", async () => {
+test("temporary revisions (not kept forever) are listed like Drive lists them, downloadable and deletable, and left to Drive", async () => {
   const a = device(drive, "A", clock);
   const page = new FakePage(undefined, clock);
   page.read_("qidian", "100", 1);
@@ -189,15 +147,14 @@ test("temporary revisions (not kept forever) are listed like Drive lists them, d
   await a.engine.deleteVersion(versions[2]!.id);
   expect((await a.engine.versions()).versions).toHaveLength(3);
 
-  // The next version this browser saves is kept forever; the policy (1 a day) leaves temporary ones alone.
-  await a.engine.setVersionPolicy({ perDay: 1, days: 1 });
+  // The next version this browser saves is kept forever; temporary ones stay for Drive to delete.
   clock.tick(60_000);
   page.read_("qidian", "100", 2);
   await a.engine.sync(page, page.times);
   versions = (await a.engine.versions()).versions;
   expect(versions[0]).toMatchObject({ current: true, temporary: false });
   expect(versions.filter((v) => v.temporary)).toHaveLength(2);
-  expect(versions.filter((v) => !v.temporary)).toHaveLength(1);
+  expect(versions.filter((v) => !v.temporary)).toHaveLength(2);
 });
 
 test("each new version ends up kept forever, even if Drive ignored the upload's flag; the latest can never be deleted", async () => {
@@ -219,4 +176,19 @@ test("each new version ends up kept forever, even if Drive ignored the upload's 
   expect(a.engine.deleteVersion(versions[0]!.id)).rejects.toThrow("can't be deleted");
   await a.engine.deleteVersion(versions[1]!.id);
   expect((await a.engine.versions()).versions).toHaveLength(1);
+});
+
+test(`with more than ${KEEP_FOREVER} versions, the oldest become temporary and nothing hits Drive's limit of 200`, async () => {
+  const a = device(drive, "A", clock);
+  const page = new FakePage(undefined, clock);
+  for (let chap = 1; chap <= KEEP_FOREVER + 25; chap++) {
+    clock.tick(60_000);
+    page.read_("qidian", "100", chap);
+    await a.engine.sync(page, page.times);
+  }
+  const { versions } = await a.engine.versions();
+  expect(versions.filter((v) => !v.temporary)).toHaveLength(KEEP_FOREVER);
+  expect(versions.filter((v) => v.temporary)).toHaveLength(25);
+  expect(versions[0]).toMatchObject({ current: true, temporary: false });
+  expect(versions.at(-1)!.temporary).toBe(true);
 });

@@ -1,4 +1,3 @@
-import type { VersionPolicy } from "./versions";
 import type { Device, RemoteDevice, RemoteSummary } from "./engine";
 import type { WritePlan, counts } from "./model";
 import type { Snapshot } from "./sitedata";
@@ -40,7 +39,6 @@ export type UiRequest =
   | { type: "removeDevice"; id: string }
   | { type: "versions" }
   | { type: "saveVersion" }
-  | { type: "setVersionPolicy"; policy: VersionPolicy }
   | { type: "deleteVersion"; id: string }
   | { type: "downloadVersion"; id: string }
   | { type: "restoreVersion"; id: string }

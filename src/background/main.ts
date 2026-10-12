@@ -132,9 +132,7 @@ async function handleUi(msg: UiRequest): Promise<unknown> {
       return serialized(() => engineFor(s, active).versions());
     case "saveVersion":
       return serialized(() => linkedEngine(s).saveVersion());
-    case "setVersionPolicy":
-      if (!active) throw new Error("No account selected");
-      return serialized(() => engineFor(s, active).setVersionPolicy(msg.policy));
+
     case "deleteVersion":
       if (!active) throw new Error("No account selected");
       return serialized(() => engineFor(s, active).deleteVersion(msg.id));

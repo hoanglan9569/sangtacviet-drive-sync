@@ -1,23 +1,15 @@
 /**
- * Versions: dulieu.txt's own revisions in Drive (its version history),
- * one per change, kept forever until the policy drops them. A joining browser's
- * own data, and versions saved by older releases, are separate files (stvSync = backup).
- * The policy (versions per day, saved days kept) lives on the sync folder, so
- * every browser on the account follows the same one.
+ * Versions: dulieu.txt's own revisions in Drive (its version history), one per
+ * change, kept forever like Drive's "Keep forever". Drive keeps at most 200 per
+ * file, so past KEEP_FOREVER the oldest become temporary again and Drive deletes
+ * them in its own time. A joining browser's own data, and versions saved by older
+ * releases, are separate files (stvSync = backup).
  */
 import type { DriveFile, Revision } from "./drive";
 
-export interface VersionPolicy {
-  /** Newest versions kept per day. */
-  perDay: number;
-  /** Days kept, counting only days that have versions: gaps with nothing saved do not count. */
-  days: number;
-}
+/** Revisions kept forever; Drive allows 200 per file, this leaves room for the next upload. */
+export const KEEP_FOREVER = 180;
 
-export const DEFAULT_POLICY: VersionPolicy = { perDay: 2, days: 7 };
-export const POLICY_LIMITS: Record<keyof VersionPolicy, [min: number, max: number]> = { perDay: [1, 24], days: [1, 365] };
-/** Drive keeps at most 200 revisions of a file forever; this leaves room for the next upload. */
-export const MAX_VERSIONS = 180;
 /** "join": a browser's own data from before it joined the account, where the account's data won. */
 export type VersionReason = "auto" | "manual" | "restore" | "join";
 
@@ -37,7 +29,7 @@ export interface Version {
   reason: VersionReason;
   /** dulieu.txt's current content: Drive does not delete that one. */
   current?: boolean;
-  /** A revision not kept forever: Drive deletes it 30 days after a newer one, or sooner past 100. The policy leaves these to Drive. */
+  /** A revision not kept forever: Drive deletes it 30 days after a newer one, or sooner past 100. */
   temporary?: boolean;
 }
 
@@ -47,23 +39,6 @@ export function dayOf(ms: number): string {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-
-export function clampPolicy(p: Partial<VersionPolicy>): VersionPolicy {
-  const one = (k: keyof VersionPolicy) => {
-    const [min, max] = POLICY_LIMITS[k];
-    const n = Math.round(Number(p[k]));
-    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : DEFAULT_POLICY[k];
-  };
-  const perDay = one("perDay");
-  return { perDay, days: Math.min(one("days"), Math.floor(MAX_VERSIONS / perDay)) };
-}
-
-/** The policy stored on the sync folder's appProperties. */
-export function policyFrom(props: Record<string, string> | undefined): VersionPolicy {
-  return clampPolicy({ perDay: Number(props?.backupPerDay ?? DEFAULT_POLICY.perDay), days: Number(props?.backupDays ?? DEFAULT_POLICY.days) });
-}
-
-export const policyProps = (p: VersionPolicy): Record<string, string> => ({ backupPerDay: String(p.perDay), backupDays: String(p.days) });
 
 export function versionFrom(f: DriveFile): Version {
   const a = f.appProperties ?? {};
@@ -110,23 +85,11 @@ export function versionFromRevision(fileId: string, r: Revision, current: boolea
 /** Newest first. */
 export const byNewest = (a: Version, b: Version) => b.at - a.at;
 
-/**
- * The versions the policy drops. Each saved day keeps its `perDay` newest, and only the
- * `days` most recent days that have versions are kept, however far apart they are: with
- * 2 a day and 7 days, at most 14 versions remain. "join" versions neither count toward a
- * day's versions nor make a day count; they go with their day. Temporary revisions are
- * left to Drive.
- */
-export function toPrune(versions: Version[], policy: VersionPolicy): Version[] {
-  const sorted = versions.filter((v) => !v.temporary).sort(byNewest);
-  const days = [...new Set(sorted.filter((v) => v.reason !== "join").map((v) => v.day))].sort().reverse();
-  const oldest = days.length > policy.days ? days[policy.days - 1]! : "";
-  const perDay = new Map<string, number>();
-  return sorted.filter((v) => {
-    if (v.day < oldest) return true;
-    if (v.reason === "join") return false;
-    const n = (perDay.get(v.day) ?? 0) + 1;
-    perDay.set(v.day, n);
-    return n > policy.perDay;
-  });
+/** The revisions to make temporary again: the kept-forever ones past the newest KEEP_FOREVER. Never the latest. */
+export function toRelease(versions: Version[]): Version[] {
+  return versions
+    .filter((v) => v.id.startsWith("rev:") && !v.temporary)
+    .sort(byNewest)
+    .slice(KEEP_FOREVER)
+    .filter((v) => !v.current);
 }

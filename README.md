@@ -43,7 +43,7 @@ service worker      background.js
   - Books only one side has, and names only one side has, end up on both.
   - The same book on both: the further chapter wins.
   - A name term the account already translates differently: the account's translation stays.
-  - Whatever the joining browser loses that way is saved first as a version ("its own data before joining"). It goes with its day, but doesn't count toward versions per day or saved days.
+  - Whatever the joining browser loses that way is saved first as a version ("its own data before joining").
 - **Open pages stay consistent:** when synced names arrive for the chapter you have open, the name editor is updated, so the site's next save cannot drop them. On the home page, the history list redraws itself. A toast offers a reload.
 - **Google sign-in:** `chrome.identity.launchWebAuthFlow` with scope `drive.file`, so the extension only sees files it created. Tokens are renewed silently. When Google wants you back, the popup shows **Sign in again**.
 
@@ -83,12 +83,12 @@ Settings: domains (adding one asks for access to it), the OAuth client ID, and *
 - **Rename** it. Another browser takes the new name at its next sync.
 - **Remove** it. Its file goes to the Drive trash, and anything it already synced stays. That browser stops syncing with the account until it is linked again from its own popup. "Remove this browser" does the same for the current browser.
 
-**Versions** keeps the account's data history in its Drive, as the version history of `SangTacViet Sync/dulieu.txt` (site format), like a Google Doc's. The card shows the policy; click it to manage versions:
+**Versions** keeps the account's data history in its Drive, as the version history of `SangTacViet Sync/dulieu.txt` (site format), like a Google Doc's. The card shows how many there are; click it to manage them:
 
-- Every sync that changes the data saves a version. Each day keeps its newest **versions per day** (default 2). **Saved days to keep** (default 7) counts only days that have versions: days with nothing saved are skipped, so 7 saved days keep up to 14 versions however far apart they are. At most 180 versions in all, since Drive keeps up to 200 per file forever. The policy is stored on the Drive folder, so all browsers on the account share it.
+- Every sync that changes the data saves a version, kept forever. Drive keeps at most 200 per file forever, so past 180 the oldest become temporary: Drive deletes those after 30 days. There is nothing to configure.
 - Pick a version to **Restore** it, **Download** it as `.txt`, or **Delete** it. Restore replaces the data in every browser on the account; the data it replaces stays as a version. The **latest** version is dulieu.txt itself and can't be deleted.
-- The list shows every version Drive shows under **Manage versions**, including **temporary** ones (not kept forever, e.g. uploaded by an older release). Those can be downloaded, restored and deleted too; the policy leaves them to Drive, which deletes them 30 days after a newer version, or sooner past 100.
-- A joining browser's own data, and versions saved by older versions of the extension, are separate files in the folder (`dulieu before joining - …txt`, older `backup …txt`). They are listed and rotated the same way.
+- The list shows every version Drive shows under **Manage versions**, including **temporary** ones (not kept forever, e.g. uploaded by an older release). Those can be downloaded, restored and deleted too; Drive deletes them itself 30 days after a newer version, or sooner past 100.
+- A joining browser's own data, and versions saved by older versions of the extension, are separate files in the folder (`dulieu before joining - …txt`, older `backup …txt`). They are listed too and stay until you delete them.
 - Deleting dulieu.txt from Drive deletes its versions with it.
 - The list refreshes on its own.
 
@@ -106,7 +106,7 @@ bun run test/fake-drive.ts 8787 [--file state.json]   # fake Drive for manual/br
 | `src/shared/model.ts` | items, merge, diff (pure) |
 | `src/shared/engine.ts` | one sync round against Drive, versions |
 | `src/shared/drive.ts` | Drive v3 calls |
-| `src/shared/versions.ts` | version policy and rotation (pure) |
+| `src/shared/versions.ts` | versions: revision naming, which ones to keep forever (pure) |
 | `src/background/` | service worker: auth, settings, scheduling, content-script registration |
 | `src/content/` | `hook.ts` (page world), `bridge.ts` (content script) |
 | `src/ui/` | popup, settings page (`versions.ts`: the Versions card and dialog) |

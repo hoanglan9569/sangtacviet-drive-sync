@@ -1,24 +1,19 @@
 /**
  * Settings page "Versions": a one-line card; a click opens a dialog with the
- * policy (versions per day, saved days kept) and the versions (dulieu.txt's
- * version history), where one can be picked to restore, download or delete.
- * Both stay current on their own.
+ * versions (dulieu.txt's version history), where one can be picked to restore,
+ * download or delete. Both stay current on their own.
  */
-import { type VersionPolicy, type Version, MAX_VERSIONS } from "../shared/versions";
+import { type Version, KEEP_FOREVER } from "../shared/versions";
 import type { Status } from "../shared/messages";
 import { ago, busy, call, h } from "./common";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const dialog = $<HTMLDialogElement>("versions-dialog");
-const perDay = $<HTMLInputElement>("per-day");
-const days = $<HTMLInputElement>("days");
 
 let status: Status | undefined;
-let data: { sub: string; policy: VersionPolicy; versions: Version[] } | undefined;
+let data: { sub: string; versions: Version[] } | undefined;
 let error = "";
 let selected: string | undefined;
-/** The policy inputs were edited and not saved yet: refreshes leave them alone. */
-let editing = false;
 
 const account = () => status?.accounts.find((a) => a.sub === status?.active);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -53,7 +48,7 @@ export function refreshVersions(): Promise<void> {
     try {
       status = await call<Status>({ type: "status" });
       const sub = status.active;
-      data = sub ? { sub, ...(await call<{ policy: VersionPolicy; versions: Version[] }>({ type: "versions" })) } : undefined;
+      data = sub ? { sub, ...(await call<{ versions: Version[] }>({ type: "versions" })) } : undefined;
       error = "";
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -66,26 +61,18 @@ export function refreshVersions(): Promise<void> {
 function render(): void {
   const a = account();
   const versions = data?.sub === a?.sub ? (data?.versions ?? []) : [];
-  const policy = data?.policy;
   if (selected && !versions.some((v) => v.id === selected)) selected = undefined;
 
-  // The card: one line of policy, one of state.
+  // The card: one line of state.
   const summary = $("versions-summary");
   if (!a) summary.textContent = "Connect a Google account in the popup to keep versions.";
   else if (error && !data) summary.replaceChildren(h("span", { class: "error" }, error));
   else
     summary.replaceChildren(
-      policy ? `${plural(policy.perDay, "version")} a day · last ${plural(policy.days, "saved day")}` : "…",
-      h("br"),
-      versions.length ? `${plural(versions.length, "version")}${temporary(versions)} · newest ${ago(versions[0]!.at)}` : a.linked ? "No versions yet: the next sync saves one." : "Start syncing this account to keep versions.",
+      !data ? "…" : versions.length ? `${plural(versions.length, "version")}${temporary(versions)} · newest ${ago(versions[0]!.at)}` : a.linked ? "No versions yet: the next sync saves one." : "Start syncing this account to keep versions.",
     );
 
   // The dialog.
-  $("versions-account").textContent = a ? `Versions of ${a.email}'s data, kept in its Google Drive.` : "";
-  if (policy && !editing) {
-    perDay.value = String(policy.perDay);
-    days.value = String(policy.days);
-  }
   $("versions-error").textContent = error;
   const groups = new Map<string, Version[]>();
   for (const v of versions) groups.set(v.day, [...(groups.get(v.day) ?? []), v]);
@@ -123,7 +110,6 @@ function render(): void {
   $<HTMLButtonElement>("version-delete").title = current ? "The latest version is dulieu.txt's current content and can't be deleted." : "";
   $<HTMLButtonElement>("version-restore").disabled = none || !a?.linked;
   $<HTMLButtonElement>("version-save-now").disabled = !a?.linked;
-  $<HTMLButtonElement>("policy-save").disabled = !a;
 }
 
 function select(id: string): void {
@@ -136,7 +122,6 @@ const chosen = () => data?.versions.find((v) => v.id === selected);
 const when = (v: Version) => `${dayLabel(v.day).toLowerCase()} at ${time(v.at)}`;
 
 function open(): void {
-  editing = false;
   render();
   dialog.showModal();
   void refreshVersions();
@@ -146,21 +131,7 @@ $("versions-card").addEventListener("click", open);
 $("versions-card").addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), open()));
 $("versions-close").addEventListener("click", () => dialog.close());
 dialog.addEventListener("click", (e) => e.target === dialog && dialog.close());
-for (const input of [perDay, days]) input.addEventListener("input", () => (editing = true));
-$("max-versions").textContent = String(MAX_VERSIONS);
-
-$("policy-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const policy = { perDay: Number(perDay.value), days: Number(days.value) };
-  const old = data?.policy;
-  const fewer = old && (policy.perDay < old.perDay || policy.days < old.days);
-  if (fewer && !confirm("Keep fewer versions? Versions beyond the new limits are deleted now.")) return;
-  void busy($<HTMLButtonElement>("policy-save"), "Saving…", async () => {
-    await call({ type: "setVersionPolicy", policy });
-    editing = false;
-    await refreshVersions();
-  }, fail);
-});
+$("keep-forever").textContent = String(KEEP_FOREVER);
 
 $("version-save-now").addEventListener("click", (e) =>
   void busy(e.currentTarget as HTMLButtonElement, "Saving…", async () => {
