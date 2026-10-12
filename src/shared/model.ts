@@ -88,6 +88,8 @@ export interface AbsorbOptions {
   times?: Record<string, number>;
   /** Reading-history timestamp of this browser (the site's `hstamp` cookie, ms), for first syncs. */
   stamp?: number;
+  /** Collects the keys of the items changed. */
+  touched?: Set<string>;
 }
 
 /**
@@ -101,6 +103,7 @@ export function absorbLocal(items: Items, local: Snapshot, shadow: Snapshot | nu
   const put = (k: string, it: Item) => {
     if (!wins(it, items[k])) return;
     items[k] = it;
+    o.touched?.add(k);
     changed = true;
   };
   const timeOf = (k: string) => Math.min(o.now, o.times?.[isEntryKey(k) ? "tusach" : splitLineKey(k)[0]] ?? o.now);
@@ -314,7 +317,7 @@ function liveTerms(items: Items): Map<string, string[]> {
  * Keeps one line per term: the newest change wins (ties by line text, so every
  * browser picks the same one); the others become tombstones.
  */
-export function resolveTerms(items: Items): boolean {
+export function resolveTerms(items: Items, touched?: Set<string>): boolean {
   let changed = false;
   for (const keys of liveTerms(items).values()) {
     if (keys.length < 2) continue;
@@ -322,6 +325,7 @@ export function resolveTerms(items: Items): boolean {
     for (const k of keys) {
       if (k === winner) continue;
       items[k] = { t: items[k]!.t + 1, v: null };
+      touched?.add(k);
       changed = true;
     }
   }

@@ -1,7 +1,7 @@
 /**
  * In-memory stand-in for the Drive v3 endpoints src/shared/drive.ts uses:
  * list (appProperties filters only), download, get, metadata patch (rename,
- * trash), folder create, multipart create, media update. Every account sees the
+ * trash), folder create, multipart create, media update, copy, delete. Every account sees the
  * same files; tokens are not checked beyond being present. CORS is open so an extension service worker can call it.
  *
  *   bun run test/fake-drive.ts [port] [--file state.json]   # standalone, for browser probes
@@ -108,9 +108,9 @@ export class FakeDrive {
       return this.json({ ok: true });
     }
     if (!req.headers.get("Authorization")?.startsWith("Bearer ")) return this.json({ error: { message: "no token" } }, 401);
-    const m = /^\/(upload\/)?drive\/v3\/files(?:\/([^/]+))?$/.exec(url.pathname);
+    const m = /^\/(upload\/)?drive\/v3\/files(?:\/([^/]+))?(\/copy)?$/.exec(url.pathname);
     if (!m) return this.json({ error: { message: "not found" } }, 404);
-    const [, upload, id] = m;
+    const [, upload, id, copy] = m;
 
     if (req.method === "GET" && !id) {
       const q = url.searchParams.get("q") ?? "";
@@ -129,6 +129,10 @@ export class FakeDrive {
     if (req.method === "GET" && f && url.searchParams.get("alt") !== "media") return this.json({ ...this.meta(f), trashed: f.trashed });
     if (req.method === "GET" && f) {
       return new Response(f.content, { headers: { ...CORS, "Content-Type": "text/plain; charset=utf-8" } });
+    }
+    if (req.method === "POST" && copy && f) {
+      const meta = (await req.json()) as DriveFile;
+      return this.json(this.meta(this.add({ ...meta, appProperties: { ...f.appProperties, ...meta.appProperties } }, f.content)));
     }
     if (req.method === "DELETE" && f) {
       this.files.delete(f.id);

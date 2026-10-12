@@ -1,7 +1,7 @@
 /**
  * The few Google Drive v3 calls the sync needs. The `drive.file` scope only
  * shows files this app created, so files are found by their appProperties
- * (stvSync = root | device | export), never by name.
+ * (stvSync = root | device | ops | export | backup), never by name.
  */
 
 export const DRIVE_BASE = "https://www.googleapis.com";
@@ -138,6 +138,16 @@ export class Drive {
 
   create(meta: FileMeta, content: string, contentType: string): Promise<DriveFile> {
     return this.multipart("POST", "/upload/drive/v3/files", meta, content, contentType);
+  }
+
+  /** A server-side copy: nothing is uploaded. `meta.appProperties` are merged into the source's. */
+  async copy(id: string, meta: FileMeta): Promise<DriveFile> {
+    const res = await this.call(`/drive/v3/files/${encodeURIComponent(id)}/copy?fields=${FIELDS}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=UTF-8" },
+      body: JSON.stringify(meta),
+    });
+    return res.json() as Promise<DriveFile>;
   }
 
   /** Replaces the content; `appProperties` (if given) are merged into the file's. */

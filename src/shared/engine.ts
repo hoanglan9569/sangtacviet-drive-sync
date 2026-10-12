@@ -3,15 +3,20 @@
  *
  *   1. read the page's localStorage (a "replica": one sangtacviet origin open in a tab)
  *      and record what changed since its last sync
- *   2. merge every other browser's device file from Drive
- *   3. upload this browser's device file, and the site-format dulieu.txt, if anything changed
+ *   2. merge the other browsers' changes from Drive
+ *   3. upload what changed here: a small change file, not the whole data
  *   4. write the merged result back into the page — only if the page did not change
  *      meanwhile (compare-and-set), otherwise start over
+ *   5. then, off the page's critical path: update dulieu.txt and save a backup version
  *
- * Each browser writes only its own device file, so two browsers syncing at the
- * same moment cannot overwrite each other's changes on Drive.
+ * Each browser keeps a device file (all its data, as of change number `upTo`) and
+ * change files numbered after it (stvSync = ops). Every few dozen changes it folds
+ * them into the device file. Others download only the change files they lack, and
+ * the device file only when they fell further behind than the change files reach.
+ * Each browser writes only its own files, so two browsers syncing at the same
+ * moment cannot overwrite each other's changes on Drive.
  */
-import { Drive, DriveError, type DriveFile, quote } from "./drive";
+import { Drive, DriveError, type DriveFile, type FileMeta, quote } from "./drive";
 import {
   type Items,
   type WritePlan,
@@ -46,6 +51,10 @@ export const FOLDER_NAME = "SangTacViet Sync";
 export const EXPORT_NAME = "dulieu.txt";
 export const TOMBSTONE_TTL = 180 * 24 * 3600 * 1000;
 const MAX_ATTEMPTS = 5;
+/** Change files kept before they are folded into the device file. */
+export const COMPACT_AT = 30;
+/** A change touching more items than this rewrites the device file instead (a restore, a big import). */
+const OPS_MAX_ITEMS = 1000;
 
 export interface Replica {
   origin: string;
@@ -71,12 +80,25 @@ export interface Device {
 /** This browser's device file was removed (from another browser): it no longer syncs with the account. */
 export class DeviceRemovedError extends Error {}
 
+type WireItems = Record<string, [t: number, v: string | null]>;
+
 export interface DeviceFile {
   format: "stv-drive-sync/device";
   v: 1;
   device: Device;
   updated: number;
-  items: Record<string, [t: number, v: string | null]>;
+  /** The newest of this browser's change files the items include. Files of older versions have none and are rewritten whole on every change. */
+  upTo?: number;
+  items: WireItems;
+}
+
+/** The items one browser changed in one sync. */
+export interface OpsFile {
+  format: "stv-drive-sync/ops";
+  v: 1;
+  device: string;
+  seq: number;
+  items: WireItems;
 }
 
 interface AccountState {
@@ -94,13 +116,24 @@ export interface RemoteDevice {
 interface RemoteState {
   folderId?: string;
   deviceFileId?: string;
+  /** This browser's device file is in the old whole-file format: the next push rewrites it. */
+  legacy?: boolean;
+  /** The device file holds an older name than this browser's: the next push re-sends it. */
+  renamed?: boolean;
+  /** Number of this browser's newest change (change file or device file). */
+  seq?: number;
+  /** This browser's change files on Drive. */
+  ops?: { id: string; seq: number }[];
   exportFileId?: string;
-  pushedRev: number;
   exportHash?: string;
   /** Hash of the newest backup version this browser knows of. */
   backupHash?: string;
-  /** Device file id -> checksum already merged. */
-  peers: Record<string, string>;
+  /** `rev` of the data dulieu.txt and the backups were last brought up to date with. */
+  publishedRev?: number;
+  /** The backup versions' ids as of the last sync: any change rewrites this state, which tells open Settings pages to refresh. */
+  versionIds?: string;
+  /** Other browsers' device file id -> the newest of their changes merged here (and the file's checksum, for old-format files). */
+  merged?: Record<string, { seq: number; sum?: string }>;
   devices: RemoteDevice[];
   /** Origins that have a shadow for this account. */
   origins?: string[];
@@ -122,7 +155,24 @@ export interface RemoteSummary {
 }
 
 const tag = (k: string) => `appProperties has { key='stvSync' and value='${k}' }`;
-const TAGGED = ["root", "device", "export"].map(tag).join(" or ");
+const TAGGED = ["root", "device", "ops", "export"].map(tag).join(" or ");
+/** What a sync lists: everything it reads, plus the backup versions it may rotate. */
+const SYNC_LIST = `${TAGGED} or ${tag("backup")}`;
+
+const kindOf = (f: DriveFile) => f.appProperties?.stvSync;
+const deviceOf = (f: DriveFile) => f.appProperties?.device ?? "";
+const seqOf = (f: DriveFile) => Number(f.appProperties?.seq ?? 0);
+const oldestFirst = (a: DriveFile, b: DriveFile) => (a.createdTime ?? "").localeCompare(b.createdTime ?? "");
+const toWire = (items: Items, keys: Iterable<string>): WireItems => {
+  const out: WireItems = {};
+  for (const k of keys) {
+    const it = items[k];
+    if (it) out[k] = [it.t, it.v];
+  }
+  return out;
+};
+const fromWire = (w: WireItems): Items => Object.fromEntries(Object.entries(w).map(([k, [t, v]]) => [k, { t, v }]));
+const isNotFound = (e: unknown) => e instanceof DriveError && e.status === 404;
 
 /** The newest version of the account's data (a "join" version holds one browser's own data). */
 const latest = (versions: BackupVersion[]) => versions.find((v) => v.reason !== "join");
@@ -147,13 +197,17 @@ export class SyncEngine {
   private get remoteKey() {
     return `remote:${this.account}`;
   }
+  /** Keys changed in this browser and not yet on Drive. Kept apart from the (large) state, so clearing it is cheap. */
+  private get outboxKey() {
+    return `outbox:${this.account}`;
+  }
   private shadowKey(origin: string) {
     return `shadow:${this.account}:${origin}`;
   }
 
   private async load(): Promise<[AccountState, RemoteState]> {
     const state = (await this.kv.get<AccountState>(this.stateKey)) ?? { items: {}, rev: 0 };
-    const remote = (await this.kv.get<RemoteState>(this.remoteKey)) ?? { pushedRev: -1, peers: {}, devices: [] };
+    const remote = (await this.kv.get<RemoteState>(this.remoteKey)) ?? { devices: [] };
     return [state, remote];
   }
 
@@ -168,26 +222,38 @@ export class SyncEngine {
     });
     let pushed = false;
     let joinSaved = false;
+    let files: DriveFile[] = [];
+    const pull = async () => {
+      const r = await this.pull(state, remote);
+      files = r.files;
+      return r.changed;
+    };
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const now = this.now();
       const read = replica ? await replica.read() : null;
       // No mark: the page's storage was cleared (site data, cookies) since the last sync. Treat it like a
       // first sync, so the empty page counts as nothing deleted and is filled back from Drive.
       const shadow = replica && read?.marked ? ((await this.kv.get<Snapshot>(this.shadowKey(replica.origin))) ?? null) : null;
+      const touched = new Set<string>();
       let changed = false;
       // Joining (no shadow) merges against the account's data, so that is pulled first.
-      if (attempt === 0 && !shadow) changed = (await this.pull(state, remote)) || changed;
-      if (read) changed = absorbLocal(state.items, read.snapshot, shadow, { now, times, stamp: read.stamp }) || changed;
-      if (attempt === 0 && shadow) changed = (await this.pull(state, remote)) || changed;
-      changed = resolveTerms(state.items) || changed;
+      if (attempt === 0 && !shadow) changed = (await pull()) || changed;
+      if (read) changed = absorbLocal(state.items, read.snapshot, shadow, { now, times, stamp: read.stamp, touched }) || changed;
+      if (attempt === 0 && shadow) changed = (await pull()) || changed;
+      if (changed) changed = resolveTerms(state.items, touched) || changed;
       if (read && !shadow && !joinSaved) joinSaved = await this.saveJoin(read.snapshot, state.items, remote);
       changed = dropTombstones(state.items, now - TOMBSTONE_TTL) || changed;
-      if (changed) state.rev++;
-      await this.kv.set(this.stateKey, state);
+      if (changed) {
+        state.rev++;
+        await this.kv.set(this.stateKey, state);
+      }
+      if (touched.size) await this.kv.set(this.outboxKey, [...new Set([...(await this.outbox()), ...touched])]);
       pushed = (await this.push(state, remote)) || pushed;
       await this.kv.set(this.remoteKey, remote);
-      if (attempt === 0 && (await this.autoBackup(state, remote))) await this.kv.set(this.remoteKey, remote);
-      if (!replica || !read) return result([]);
+      if (!replica || !read) {
+        await this.publish(state, remote, files);
+        return result([]);
+      }
 
       const plan = planWrites(read.snapshot, buildSnapshot(state.items, read.snapshot));
       if ((!isEmptyPlan(plan) || !read.marked) && !(await replica.apply(plan))) continue;
@@ -196,119 +262,198 @@ export class SyncEngine {
         remote.origins = [...(remote.origins ?? []), replica.origin];
         await this.kv.set(this.remoteKey, remote);
       }
+      await this.publish(state, remote, files);
       return result(Object.keys(plan.set));
     }
     throw new Error("The page kept changing its data during sync; will retry.");
   }
 
-  /** Merges other browsers' device files; true if anything new arrived. */
-  private async pull(state: AccountState, remote: RemoteState): Promise<boolean> {
-    const files = await this.drive.list(`trashed=false and (${TAGGED})`);
-    files.sort((a, b) => (a.createdTime ?? "").localeCompare(b.createdTime ?? ""));
-    const kind = (f: DriveFile) => f.appProperties?.stvSync;
-    remote.folderId ??= files.find((f) => kind(f) === "root")?.id;
-    remote.exportFileId ??= files.find((f) => kind(f) === "export")?.id;
+  private async outbox(): Promise<string[]> {
+    return (await this.kv.get<string[]>(this.outboxKey)) ?? [];
+  }
+
+  /** Merges other browsers' changes; `changed` if anything new arrived. */
+  private async pull(state: AccountState, remote: RemoteState): Promise<{ changed: boolean; files: DriveFile[] }> {
+    const files = await this.drive.list(`trashed=false and (${SYNC_LIST})`);
+    files.sort(oldestFirst);
+    remote.folderId ??= files.find((f) => kindOf(f) === "root")?.id;
+    remote.exportFileId ??= files.find((f) => kindOf(f) === "export")?.id;
+    const bases = files.filter((f) => kindOf(f) === "device");
+    const changes = files.filter((f) => kindOf(f) === "ops").sort((a, b) => seqOf(a) - seqOf(b));
+
+    // Gone from the listing: check the file itself, since a just-created file can lag behind in search.
+    if (remote.deviceFileId && !bases.some((f) => f.id === remote.deviceFileId) && (await this.removed(remote.deviceFileId)))
+      throw new DeviceRemovedError("This browser was removed from the account in another browser.");
+    const own = bases.find((f) => deviceOf(f) === this.device.id && (!remote.deviceFileId || f.id === remote.deviceFileId));
+    if (own) {
+      remote.deviceFileId ??= own.id;
+      remote.legacy = own.appProperties?.upTo === undefined;
+      this.adoptName(own, remote);
+    }
+    // Numbering carries on from what Drive holds, also after this browser forgot its sync state.
+    const mine = changes.filter((f) => deviceOf(f) === this.device.id).map((f) => ({ id: f.id, seq: seqOf(f) }));
+    const top = Math.max(0, ...mine.map((o) => o.seq));
+    // Keep the ones written after the newest listed: they may not be searchable yet.
+    remote.ops = [...mine, ...(remote.ops ?? []).filter((o) => o.seq > top)];
+    remote.seq = Math.max(remote.seq ?? 0, Number(own?.appProperties?.upTo ?? 0), top);
 
     let changed = false;
-    const seen: Record<string, string> = {};
-    const mine = files.filter((f) => kind(f) === "device");
-    // Gone from the listing: check the file itself, since a just-created file can lag behind in search.
-    if (remote.deviceFileId && !mine.some((f) => f.id === remote.deviceFileId) && (await this.removed(remote.deviceFileId)))
-      throw new DeviceRemovedError("This browser was removed from the account in another browser.");
-    for (const f of mine) {
-      const id = f.appProperties?.device ?? "";
-      if (id === this.device.id) {
-        remote.deviceFileId ??= f.id;
-        if (f.id === remote.deviceFileId) {
-          this.adoptName(f, remote);
-          continue;
-        }
+    const merge = (items: WireItems | undefined) => {
+      if (items) changed = mergeItems(state.items, fromWire(items)) || changed;
+    };
+    const merged: NonNullable<RemoteState["merged"]> = {};
+    for (const f of bases) {
+      if (f.id === remote.deviceFileId) continue;
+      const prev = remote.merged?.[f.id];
+      if (f.appProperties?.upTo === undefined) {
+        // An older version of this extension: the whole data, rewritten on every change.
+        const sum = f.md5Checksum ?? f.modifiedTime ?? "";
+        if (!sum || prev?.sum !== sum) merge((await this.downloadJson<DeviceFile>(f.id, "stv-drive-sync/device"))?.items);
+        merged[f.id] = { seq: 0, sum };
+        continue;
       }
-      const sum = f.md5Checksum ?? f.modifiedTime ?? "";
-      seen[f.id] = sum;
-      if (sum && remote.peers[f.id] === sum) continue;
-      const file = JSON.parse(await this.drive.download(f.id)) as Partial<DeviceFile>;
-      if (file.format !== "stv-drive-sync/device" || !file.items) continue;
-      const items: Items = {};
-      for (const [k, [t, v]] of Object.entries(file.items)) items[k] = { t, v };
-      changed = mergeItems(state.items, items) || changed;
+      const upTo = Number(f.appProperties.upTo);
+      const theirs = changes.filter((c) => deviceOf(c) === deviceOf(f));
+      // The change files numbered right after `from`, without gaps (a new one may not be listed yet).
+      const run = (from: number) => {
+        const out: DriveFile[] = [];
+        for (const c of theirs) {
+          if (seqOf(c) <= from) continue;
+          if (seqOf(c) > (out.length ? seqOf(out.at(-1)!) : from) + 1) break;
+          out.push(c);
+        }
+        return out;
+      };
+      let from = prev?.seq ?? -1;
+      let next = run(from);
+      if (upTo > (next.length ? seqOf(next.at(-1)!) : from)) {
+        // Further behind than the change files reach: start from the device file.
+        merge((await this.downloadJson<DeviceFile>(f.id, "stv-drive-sync/device"))?.items);
+        from = upTo;
+        next = run(from);
+      }
+      const got = await Promise.all(next.map((c) => this.downloadJson<OpsFile>(c.id, "stv-drive-sync/ops")));
+      for (const [i, file] of got.entries()) {
+        if (file === null) break; // deleted meanwhile (folded into the device file): read that next time
+        merge(file?.items);
+        from = seqOf(next[i]!);
+      }
+      merged[f.id] = { seq: from };
     }
-    remote.peers = seen;
+    remote.merged = merged;
     remote.devices = this.devicesFrom(files);
-    return changed;
+    remote.versionIds = files
+      .filter((f) => kindOf(f) === "backup")
+      .map((f) => f.id)
+      .sort()
+      .join(",");
+    return { changed, files };
+  }
+
+  /** The file's JSON if it has the expected format (undefined otherwise); null once it is deleted. */
+  private async downloadJson<T extends { format: string }>(id: string, format: T["format"]): Promise<T | undefined | null> {
+    try {
+      const file = JSON.parse(await this.drive.download(id)) as Partial<T>;
+      return file.format === format ? (file as T) : undefined;
+    } catch (e) {
+      if (isNotFound(e)) return null;
+      if (e instanceof SyntaxError) return undefined;
+      throw e;
+    }
   }
 
   private async removed(fileId: string): Promise<boolean> {
     try {
       return !!(await this.drive.get(fileId)).trashed;
     } catch (e) {
-      if (e instanceof DriveError && e.status === 404) return true;
+      if (isNotFound(e)) return true;
       throw e;
     }
   }
 
-  /** Takes a newer name given to this browser elsewhere; re-uploads ours when Drive holds an older one. */
+  /** Takes a newer name given to this browser elsewhere; re-sends ours when Drive holds an older one. */
   private adoptName(f: DriveFile, remote: RemoteState): void {
     const name = f.appProperties?.deviceName;
     const at = Number(f.appProperties?.deviceNameAt ?? 0);
     if (name && at > (this.device.nameAt ?? 0)) this.device = { ...this.device, name, nameAt: at };
-    else if (name !== this.device.name.slice(0, 60)) remote.pushedRev = -1;
+    else if (name !== this.device.name.slice(0, 60)) remote.renamed = true;
   }
 
   private devicesFrom(files: DriveFile[]): RemoteDevice[] {
+    // A browser last synced when it last wrote its device file or a change file.
+    const last = new Map<string, string>();
+    for (const f of files) {
+      const kind = kindOf(f);
+      if (kind !== "device" && kind !== "ops") continue;
+      const t = f.modifiedTime ?? "";
+      if (t > (last.get(deviceOf(f)) ?? "")) last.set(deviceOf(f), t);
+    }
     return files
-      .filter((f) => f.appProperties?.stvSync === "device")
+      .filter((f) => kindOf(f) === "device")
       .map((f) => {
-        const id = f.appProperties?.device ?? "";
+        const id = deviceOf(f);
         const self = id === this.device.id;
-        return { id, name: self ? this.device.name : (f.appProperties?.deviceName ?? id), updated: f.modifiedTime, self };
+        return { id, name: self ? this.device.name : (f.appProperties?.deviceName ?? id), updated: last.get(id) || f.modifiedTime, self };
       });
   }
 
-  /** Uploads this browser's device file and dulieu.txt when they changed. */
-  private async push(state: AccountState, remote: RemoteState): Promise<boolean> {
-    if (state.rev === remote.pushedRev && remote.deviceFileId) return false;
+  /**
+   * Uploads what changed here: a change file, or the whole device file when there is
+   * none yet, it is in the old format, the change is large, or enough change files piled up.
+   */
+  private async push(state: AccountState, remote: RemoteState, whole = false): Promise<boolean> {
+    const outbox = await this.outbox();
+    whole ||= !remote.deviceFileId || !!remote.legacy || outbox.length > OPS_MAX_ITEMS || (remote.ops?.length ?? 0) >= COMPACT_AT;
+    if (!whole && !outbox.length) {
+      if (remote.renamed && remote.deviceFileId) {
+        await this.drive.patch(remote.deviceFileId, { appProperties: this.nameProps(this.device.name, this.device.nameAt ?? 0) });
+        remote.renamed = false;
+      }
+      return false;
+    }
     const folder = await this.ensureFolder(remote);
-    const file: DeviceFile = {
-      format: "stv-drive-sync/device",
-      v: 1,
-      device: this.device,
-      updated: this.now(),
-      items: Object.fromEntries(Object.entries(state.items).map(([k, it]) => [k, [it.t, it.v]])),
-    };
-    remote.deviceFileId = await this.upsert(remote.deviceFileId, JSON.stringify(file), "application/json", {
-      name: `device-${this.device.id}.json`,
-      parents: [folder],
-      appProperties: { stvSync: "device", device: this.device.id, ...this.nameProps(this.device.name, this.device.nameAt ?? 0) },
-    });
-    remote.pushedRev = state.rev;
+    const seq = (remote.seq ?? 0) + 1;
+    if (whole) {
+      const file: DeviceFile = {
+        format: "stv-drive-sync/device",
+        v: 1,
+        device: this.device,
+        updated: this.now(),
+        upTo: seq,
+        items: toWire(state.items, Object.keys(state.items)),
+      };
+      remote.deviceFileId = await this.upsert(remote.deviceFileId, JSON.stringify(file), "application/json", {
+        name: `device-${this.device.id}.json`,
+        parents: [folder],
+        appProperties: { stvSync: "device", device: this.device.id, upTo: String(seq), ...this.nameProps(this.device.name, this.device.nameAt ?? 0) },
+      });
+      remote.legacy = remote.renamed = false;
+      // Folded in: the change files go. Another browser still reading one falls back to the device file.
+      const folded = remote.ops ?? [];
+      remote.ops = [];
+      await Promise.all(folded.map((o) => this.removeIfThere(o.id).catch((e) => console.warn("Could not delete a change file.", e))));
+    } else {
+      const file: OpsFile = { format: "stv-drive-sync/ops", v: 1, device: this.device.id, seq, items: toWire(state.items, outbox) };
+      const created = await this.drive.create(
+        { name: `changes-${this.device.id}-${seq}.json`, parents: [folder], appProperties: { stvSync: "ops", device: this.device.id, seq: String(seq) } },
+        JSON.stringify(file),
+        "application/json",
+      );
+      remote.ops = [...(remote.ops ?? []), { id: created.id, seq }];
+    }
+    remote.seq = seq;
+    await this.kv.set(this.outboxKey, []);
     const self: RemoteDevice = { id: this.device.id, name: this.device.name, updated: new Date(this.now()).toISOString(), self: true };
     remote.devices = [...remote.devices.filter((d) => !d.self), self];
-
-    const text = exportText(state.items);
-    const hash = await sha256(text);
-    if (hash !== remote.exportHash) {
-      remote.exportFileId = await this.upsert(remote.exportFileId, text, "text/plain", {
-        name: EXPORT_NAME,
-        parents: [folder],
-        appProperties: { stvSync: "export" },
-      });
-      remote.exportHash = hash;
-    }
     return true;
   }
 
-  private async upsert(
-    id: string | undefined,
-    content: string,
-    type: string,
-    meta: { name: string; parents: string[]; appProperties: Record<string, string> },
-  ): Promise<string> {
+  private async upsert(id: string | undefined, content: string, type: string, meta: FileMeta & { parents: string[]; appProperties: Record<string, string> }): Promise<string> {
     if (id) {
       try {
         return (await this.drive.update(id, content, type, meta.appProperties)).id;
       } catch (e) {
-        if (!(e instanceof DriveError && e.status === 404)) throw e;
+        if (!isNotFound(e)) throw e;
       }
     }
     return (await this.drive.create(meta, content, type)).id;
@@ -325,21 +470,63 @@ export class SyncEngine {
     return { deviceName: name.slice(0, 60), deviceNameAt: String(at) };
   }
 
+  /**
+   * Brings dulieu.txt and the backup versions up to date with the merged data, after the page
+   * already has it. The version is a server-side copy of dulieu.txt, so the data is uploaded
+   * once. Skipped when another browser already did it; a failure is retried by the next sync
+   * and never fails this one.
+   */
+  private async publish(state: AccountState, remote: RemoteState, files: DriveFile[]): Promise<void> {
+    if (remote.publishedRev === state.rev && remote.exportHash) return;
+    const c = counts(state.items);
+    if (!c.books && !c.names) return;
+    const text = exportText(state.items);
+    const hash = await sha256(text);
+    try {
+      const exp = files.find((f) => kindOf(f) === "export" && f.id === remote.exportFileId);
+      if (hash !== remote.exportHash) {
+        if (exp?.appProperties?.hash !== hash) {
+          remote.exportFileId = await this.upsert(remote.exportFileId, text, "text/plain", {
+            name: EXPORT_NAME,
+            parents: [await this.ensureFolder(remote)],
+            appProperties: { stvSync: "export", hash },
+          });
+        }
+        remote.exportHash = hash;
+      }
+      if (hash !== remote.backupHash) {
+        const versions = files.filter((f) => kindOf(f) === "backup").map(versionFrom).sort(byNewest);
+        if (latest(versions)?.hash !== hash) {
+          // dulieu.txt was just written with this data; a browser writing it in between only makes the copy newer.
+          const copy = await this.drive.copy(remote.exportFileId!, await this.backupMeta(hash, state.items, remote, "auto"));
+          const root = files.filter((f) => kindOf(f) === "root").sort(oldestFirst)[0];
+          await this.prune([versionFrom(copy), ...versions], policyFrom(root?.appProperties));
+        }
+        remote.backupHash = hash;
+      }
+      remote.publishedRev = state.rev;
+    } catch (e) {
+      console.warn("Could not update dulieu.txt or the backups; the next sync tries again.", e);
+    }
+    await this.kv.set(this.remoteKey, remote);
+  }
+
   /** What Drive holds for this account, without changing anything. */
   async summary(): Promise<RemoteSummary> {
     const files = await this.drive.list(`trashed=false and (${TAGGED})`);
     const devices = this.devicesFrom(files);
-    const exp = files.find((f) => f.appProperties?.stvSync === "export");
+    const exp = files.find((f) => kindOf(f) === "export");
     return { exists: devices.length > 0 || !!exp, devices, exportUpdated: exp?.modifiedTime };
   }
 
-  private deviceFiles(id: string): Promise<DriveFile[]> {
-    return this.drive.list(`trashed=false and ${tag("device")} and appProperties has { key='device' and value=${quote(id)} }`);
+  /** A browser's device file and change files. */
+  private deviceFiles(id: string, kinds = ["device", "ops"]): Promise<DriveFile[]> {
+    return this.drive.list(`trashed=false and (${kinds.map(tag).join(" or ")}) and appProperties has { key='device' and value=${quote(id)} }`);
   }
 
   /** Lists the account's browsers from Drive and refreshes the cached list (once this account has synced here). */
   async listDevices(): Promise<RemoteDevice[]> {
-    const devices = this.devicesFrom(await this.drive.list(`trashed=false and ${tag("device")}`));
+    const devices = this.devicesFrom(await this.drive.list(`trashed=false and (${tag("device")} or ${tag("ops")})`));
     await this.updateCache((remote) => (remote.devices = devices));
     return devices;
   }
@@ -347,17 +534,17 @@ export class SyncEngine {
   /** Renames a browser on Drive; that browser takes the name at its next sync. */
   async renameDevice(id: string, name: string, at: number): Promise<void> {
     if (id === this.device.id) this.device = { ...this.device, name, nameAt: at };
-    for (const f of await this.deviceFiles(id)) await this.drive.patch(f.id, { appProperties: this.nameProps(name, at) });
+    for (const f of await this.deviceFiles(id, ["device"])) await this.drive.patch(f.id, { appProperties: this.nameProps(name, at) });
     await this.updateCache((remote) => (remote.devices = remote.devices.map((d) => (d.id === id ? { ...d, name } : d))));
   }
 
   /**
-   * Moves a browser's device file to the Drive trash. Its changes already merged stay; that
+   * Moves a browser's files to the Drive trash. Its changes already merged stay; that
    * browser stops syncing with this account at its next sync. Removing this browser also
    * forgets its sync state here, like a fresh install.
    */
   async removeDevice(id: string): Promise<void> {
-    for (const f of await this.deviceFiles(id)) await this.drive.patch(f.id, { trashed: true });
+    await Promise.all((await this.deviceFiles(id)).map((f) => this.drive.patch(f.id, { trashed: true })));
     if (id === this.device.id) return this.forget();
     await this.updateCache((remote) => (remote.devices = remote.devices.filter((d) => d.id !== id)));
   }
@@ -374,56 +561,34 @@ export class SyncEngine {
   /** The policy and every version, newest first. */
   async backups(): Promise<{ policy: BackupPolicy; versions: BackupVersion[] }> {
     const files = await this.drive.list(`trashed=false and (${tag("root")} or ${tag("backup")})`);
-    const root = files.filter((f) => f.appProperties?.stvSync === "root").sort((a, b) => (a.createdTime ?? "").localeCompare(b.createdTime ?? ""))[0];
-    const versions = files.filter((f) => f.appProperties?.stvSync === "backup").map(versionFrom).sort(byNewest);
+    const root = files.filter((f) => kindOf(f) === "root").sort(oldestFirst)[0];
+    const versions = files.filter((f) => kindOf(f) === "backup").map(versionFrom).sort(byNewest);
     return { policy: policyFrom(root?.appProperties), versions };
   }
 
-  /** Saves a version after a sync whenever the data changed since the newest one. */
-  private async autoBackup(state: AccountState, remote: RemoteState): Promise<boolean> {
-    if (!counts(state.items).books && !counts(state.items).names) return false;
-    const text = exportText(state.items);
-    const hash = await sha256(text);
-    if (hash === remote.backupHash) return false;
-    try {
-      const { policy, versions } = await this.backups();
-      const newest = latest(versions);
-      if (newest?.hash === hash) {
-        remote.backupHash = hash; // saved by another browser
-        return true;
-      }
-      const v = await this.writeBackup(text, hash, state.items, remote, "auto");
-      await this.prune([v, ...versions], policy);
-    } catch (e) {
-      console.warn("Backup failed; the next sync tries again.", e); // never fails the sync itself
-    }
-    return true;
-  }
-
-  private async writeBackup(text: string, hash: string, items: Items, remote: RemoteState, reason: BackupReason): Promise<BackupVersion> {
+  private async backupMeta(hash: string, items: Items, remote: RemoteState, reason: BackupReason): Promise<FileMeta> {
     const at = this.now();
     const c = counts(items);
     const day = dayOf(at);
-    const file = await this.drive.create(
-      {
-        name: `backup ${day} ${new Date(at).toTimeString().slice(0, 8).replaceAll(":", "")}.txt`,
-        parents: [await this.ensureFolder(remote)],
-        appProperties: {
-          stvSync: "backup",
-          at: String(at),
-          day,
-          deviceName: this.device.name.slice(0, 60),
-          books: String(c.books),
-          names: String(c.names),
-          hash,
-          reason,
-        },
-      },
-      text,
-      "text/plain",
-    );
     if (reason !== "join") remote.backupHash = hash;
-    return versionFrom(file);
+    return {
+      name: `backup ${day} ${new Date(at).toTimeString().slice(0, 8).replaceAll(":", "")}.txt`,
+      parents: [await this.ensureFolder(remote)],
+      appProperties: {
+        stvSync: "backup",
+        at: String(at),
+        day,
+        deviceName: this.device.name.slice(0, 60),
+        books: String(c.books),
+        names: String(c.names),
+        hash,
+        reason,
+      },
+    };
+  }
+
+  private async writeBackup(text: string, hash: string, items: Items, remote: RemoteState, reason: BackupReason): Promise<BackupVersion> {
+    return versionFrom(await this.drive.create(await this.backupMeta(hash, items, remote, reason), text, "text/plain"));
   }
 
   /**
@@ -446,10 +611,20 @@ export class SyncEngine {
   }
 
   private async prune(versions: BackupVersion[], policy: BackupPolicy, keep?: string): Promise<void> {
-    for (const v of toPrune(versions, policy)) if (v.id !== keep) await this.drive.remove(v.id);
+    const gone = toPrune(versions, policy).filter((v) => v.id !== keep);
+    // Another browser may have pruned the same version already.
+    await Promise.all(gone.map((v) => this.removeIfThere(v.id)));
   }
 
-  /** Saves a version now, whatever the gap; skipped when the newest one already holds the same data. */
+  private async removeIfThere(id: string): Promise<void> {
+    try {
+      await this.drive.remove(id);
+    } catch (e) {
+      if (!isNotFound(e)) throw e;
+    }
+  }
+
+  /** Saves a version now; skipped when the newest one already holds the same data. */
   async backupNow(): Promise<void> {
     const [state, remote] = await this.load();
     const text = exportText(state.items);
@@ -496,7 +671,7 @@ export class SyncEngine {
     resolveTerms(state.items);
     state.rev++;
     await this.kv.set(this.stateKey, state);
-    await this.push(state, remote);
+    await this.push(state, remote, true);
     await this.kv.set(this.remoteKey, remote);
     await this.prune([...saved, ...versions], policy, id); // never the version just restored
   }
@@ -517,6 +692,7 @@ export class SyncEngine {
     for (const o of remote.origins ?? []) await this.kv.remove(this.shadowKey(o));
     await this.kv.remove(this.stateKey);
     await this.kv.remove(this.remoteKey);
+    await this.kv.remove(this.outboxKey);
   }
 }
 

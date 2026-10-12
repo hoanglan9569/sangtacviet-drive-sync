@@ -26,13 +26,18 @@ content script      bridge.js  reads/writes localStorage for the background (com
 service worker      background.js
                       on write (2 s debounce), page load, every 5 min, "Sync now":
                       1. diff localStorage vs. what it held after the last sync → changed items
-                      2. merge other browsers' device files from Drive
-                      3. upload this browser's device file + dulieu.txt if changed
+                      2. merge other browsers' changes from Drive
+                      3. upload a change file holding only what changed here
                       4. write the merged result back into the page if it did not change meanwhile
+                      5. then update dulieu.txt and copy it as a backup version
 ```
 
 - **Merge model:** a last-writer-wins element set (CRDT). Items are one book in the history, or one name line. Each item records when it last changed, and deleted items are kept as tombstones for 180 days. So merging is order-independent and never loses a newer change.
-- **One file per browser** (`device-<id>.json`, found by `appProperties`). Each browser writes only its own file, so two browsers syncing at the same moment cannot clobber each other.
+- **Files per browser**, found by `appProperties`. Each browser writes only its own, so two browsers syncing at the same moment cannot clobber each other:
+  - `changes-<id>-<n>.json`: one per sync with changes, holding only the changed items (a chapter read is a few hundred bytes). Other browsers download only the ones they haven't merged.
+  - `device-<id>.json`: all the data as of change *n*. Every 30 changes the change files are folded into it and deleted. A browser further behind than the change files reach reads this file instead.
+  - Browsers on an older version of the extension still sync: they read and write the whole device file as before.
+- **dulieu.txt and backups** are written after the page is updated, so they don't delay the sync. A browser that only received changes writes neither. A backup version is a server-side copy of dulieu.txt, so the data is uploaded once per change.
 - **One translation per term.** The site uses one line per name term (`$伊莱=…`), so a list keeps one line per term, the newest change. That covers the site appending a renamed name and two browsers renaming the same term.
 - **A browser joining** (first sync, or a page whose site data was cleared) is merged against the account's data and deletes nothing:
   - Books only one side has, and names only one side has, end up on both.
@@ -102,7 +107,7 @@ bun run test/fake-drive.ts 8787 [--file state.json]   # fake Drive for manual/br
 | `src/background/` | service worker: auth, settings, scheduling, content-script registration |
 | `src/content/` | `hook.ts` (page world), `bridge.ts` (content script) |
 | `src/ui/` | popup, settings page (`backups.ts`: the Backups card and dialog) |
-| `test/` | merge, engine and backup tests against `fake-drive.ts` |
+| `test/` | merge, engine, join, change-file (`journal.test.ts`) and backup tests against `fake-drive.ts` |
 
 Limits:
 
