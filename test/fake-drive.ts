@@ -4,7 +4,10 @@
  * create, media update. Every account sees the same files; tokens are not checked
  * beyond being present. CORS is open so an extension service worker can call it.
  *
- *   bun run test/fake-drive.ts [port]    # standalone, for browser probes
+ *   bun run test/fake-drive.ts [port] [--file state.json]   # standalone, for browser probes
+ *
+ * Standalone extras: GET /__files (every file with its content), POST /__reset.
+ * With --file, files survive restarts, so probe steps run as separate processes can share them.
  */
 import type { DriveFile } from "../src/shared/drive";
 
@@ -25,12 +28,35 @@ export class FakeDrive {
   private seq = 0;
   private server?: ReturnType<typeof Bun.serve>;
 
+  constructor(private readonly file?: string) {}
+
+  async load(): Promise<this> {
+    if (this.file && (await Bun.file(this.file).exists())) {
+      const saved = (await Bun.file(this.file).json()) as { seq: number; files: Stored[] };
+      this.seq = saved.seq;
+      for (const f of saved.files) this.files.set(f.id, f);
+    }
+    return this;
+  }
+
+  private async save(): Promise<void> {
+    if (this.file) await Bun.write(this.file, JSON.stringify({ seq: this.seq, files: [...this.files.values()] }));
+  }
+
   get url(): string {
     return `http://127.0.0.1:${this.server!.port}`;
   }
 
   start(port = 0): this {
-    this.server = Bun.serve({ port, hostname: "127.0.0.1", fetch: (req) => this.handle(req) });
+    this.server = Bun.serve({
+      port,
+      hostname: "127.0.0.1",
+      fetch: async (req) => {
+        const res = await this.handle(req);
+        if (req.method !== "GET" && req.method !== "OPTIONS") await this.save();
+        return res;
+      },
+    });
     return this;
   }
 
@@ -76,6 +102,11 @@ export class FakeDrive {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const url = new URL(req.url);
     this.log.push(`${req.method} ${url.pathname}`);
+    if (url.pathname === "/__files") return this.json([...this.files.values()]);
+    if (url.pathname === "/__reset" && req.method === "POST") {
+      this.files.clear();
+      return this.json({ ok: true });
+    }
     if (!req.headers.get("Authorization")?.startsWith("Bearer ")) return this.json({ error: { message: "no token" } }, 401);
     const m = /^\/(upload\/)?drive\/v3\/files(?:\/([^/]+))?$/.exec(url.pathname);
     if (!m) return this.json({ error: { message: "not found" } }, 404);
@@ -112,6 +143,7 @@ export class FakeDrive {
 }
 
 if (import.meta.main) {
-  const d = new FakeDrive().start(Number(process.argv[2] ?? 0));
+  const file = process.argv.includes("--file") ? process.argv[process.argv.indexOf("--file") + 1] : undefined;
+  const d = (await new FakeDrive(file).load()).start(Number(process.argv[2] ?? 0));
   console.log(d.url);
 }

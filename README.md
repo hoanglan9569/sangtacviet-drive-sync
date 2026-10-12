@@ -70,7 +70,7 @@ Settings: domains (adding one asks for access to it), OAuth client ID, and the n
 
 ```powershell
 bun run check          # typecheck + tests
-bun run test/fake-drive.ts 8787   # in-memory Drive for manual runs (set settings.driveBase)
+bun run test/fake-drive.ts 8787 [--file state.json]   # fake Drive for manual/browser runs (set settings.driveBase)
 ```
 
 | Path | |

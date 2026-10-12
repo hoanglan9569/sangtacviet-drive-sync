@@ -146,7 +146,8 @@ function syncCard(s: Status, a: AccountView): HTMLElement {
       ? h("p", { class: "status bad" }, s.lastError)
       : h("p", { class: "status good" }, `Up to date · synced ${ago(s.lastSync)}`);
   card.append(state);
-  if (s.counts) card.append(h("p", { class: "muted" }, `${s.counts.books} books in history · ${s.counts.names} names in ${s.counts.nameLists} books`));
+  const n = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`;
+  if (s.counts) card.append(h("p", { class: "muted" }, `${n(s.counts.books, "book")} in history · ${n(s.counts.names, "name")} in ${n(s.counts.nameLists, "book")}`));
 
   const now = h("button", { class: "primary" }, "Sync now");
   now.addEventListener("click", () => void busy(now, "Syncing…", () => call({ type: "syncNow" }).then(render), fail));

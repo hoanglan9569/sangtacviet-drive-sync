@@ -209,6 +209,8 @@ export class SyncEngine {
       appProperties: { stvSync: "device", device: this.device.id, deviceName: this.device.name.slice(0, 60) },
     });
     remote.pushedRev = state.rev;
+    const self: RemoteDevice = { id: this.device.id, name: this.device.name, updated: new Date(this.now()).toISOString(), self: true };
+    remote.devices = [...remote.devices.filter((d) => !d.self), self];
 
     const text = exportText(state.items);
     const hash = await sha256(text);
