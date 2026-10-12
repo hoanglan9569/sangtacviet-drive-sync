@@ -6,7 +6,7 @@
 
 export const DRIVE_BASE = "https://www.googleapis.com";
 export const FOLDER_MIME = "application/vnd.google-apps.folder";
-const FIELDS = "id,name,mimeType,md5Checksum,modifiedTime,createdTime,appProperties";
+const FIELDS = "id,name,mimeType,md5Checksum,modifiedTime,createdTime,trashed,appProperties";
 
 export interface DriveFile {
   id: string;
@@ -15,8 +15,12 @@ export interface DriveFile {
   md5Checksum?: string;
   modifiedTime?: string;
   createdTime?: string;
+  trashed?: boolean;
   appProperties?: Record<string, string>;
 }
+
+/** A Drive query string literal: 'it\'s'. */
+export const quote = (s: string) => `'${s.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 
 export interface FileMeta {
   name: string;
@@ -88,6 +92,21 @@ export class Drive {
 
   async download(id: string): Promise<string> {
     return (await this.call(`/drive/v3/files/${encodeURIComponent(id)}?alt=media`)).text();
+  }
+
+  /** The file's metadata, trashed or not; throws DriveError 404 once it is deleted for good. */
+  async get(id: string): Promise<DriveFile> {
+    return (await this.call(`/drive/v3/files/${encodeURIComponent(id)}?fields=${FIELDS}`)).json() as Promise<DriveFile>;
+  }
+
+  /** Changes metadata only: `appProperties` are merged into the file's; `trashed: true` moves it to the trash. */
+  async patch(id: string, meta: { appProperties?: Record<string, string>; trashed?: boolean }): Promise<DriveFile> {
+    const res = await this.call(`/drive/v3/files/${encodeURIComponent(id)}?fields=${FIELDS}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json; charset=UTF-8" },
+      body: JSON.stringify(meta),
+    });
+    return res.json() as Promise<DriveFile>;
   }
 
   async createFolder(meta: FileMeta): Promise<DriveFile> {

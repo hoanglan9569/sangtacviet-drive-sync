@@ -1,8 +1,8 @@
 /**
  * In-memory stand-in for the Drive v3 endpoints src/shared/drive.ts uses:
- * list (appProperties filters only), download, folder create, multipart
- * create, media update. Every account sees the same files; tokens are not checked
- * beyond being present. CORS is open so an extension service worker can call it.
+ * list (appProperties filters only), download, get, metadata patch (rename,
+ * trash), folder create, multipart create, media update. Every account sees the
+ * same files; tokens are not checked beyond being present. CORS is open so an extension service worker can call it.
  *
  *   bun run test/fake-drive.ts [port] [--file state.json]   # standalone, for browser probes
  *
@@ -115,15 +115,26 @@ export class FakeDrive {
     if (req.method === "GET" && !id) {
       const q = url.searchParams.get("q") ?? "";
       const kinds = [...q.matchAll(/key='stvSync' and value='(\w+)'/g)].map((x) => x[1]);
+      const device = /key='device' and value='([^']*)'/.exec(q)?.[1];
       const files = [...this.files.values()].filter(
-        (f) => !f.trashed && (kinds.length === 0 || kinds.includes(f.appProperties?.stvSync ?? "")),
+        (f) =>
+          !f.trashed &&
+          (kinds.length === 0 || kinds.includes(f.appProperties?.stvSync ?? "")) &&
+          (device === undefined || f.appProperties?.device === device),
       );
       return this.json({ files: files.map((f) => this.meta(f)) });
     }
     const f = id ? this.files.get(id) : undefined;
     if (id && !f) return this.json({ error: { message: "File not found" } }, 404);
+    if (req.method === "GET" && f && url.searchParams.get("alt") !== "media") return this.json({ ...this.meta(f), trashed: f.trashed });
     if (req.method === "GET" && f) {
       return new Response(f.content, { headers: { ...CORS, "Content-Type": "text/plain; charset=utf-8" } });
+    }
+    if (req.method === "PATCH" && !upload && f) {
+      const meta = (await req.json()) as DriveFile;
+      if (meta.appProperties) f.appProperties = { ...f.appProperties, ...meta.appProperties };
+      if (meta.trashed !== undefined) f.trashed = meta.trashed;
+      return this.json({ ...this.meta(f), trashed: f.trashed });
     }
     if (req.method === "POST" && !upload) return this.json(this.meta(this.add((await req.json()) as DriveFile, "")));
     if (upload && (req.method === "POST" || (req.method === "PATCH" && f))) {

@@ -2,7 +2,7 @@ import type { ContentToBackground, Reply, Status, UiRequest } from "../shared/me
 import { addAccount, reconnect, signOut } from "./auth";
 import { registerContentScripts } from "./scripts";
 import { getAccountStatus, getSettings, local, matchesDomain, setAccountStatus, updateSettings } from "./settings";
-import { engineFor, isSyncing, openTabCount, recordWrite, schedule, syncAllNow, updateBadge } from "./sync";
+import { detach, engineFor, isSyncing, openTabCount, recordWrite, schedule, serialized, syncAllNow, updateBadge } from "./sync";
 import type { RemoteDevice } from "../shared/engine";
 
 const PERIOD_MIN = 5;
@@ -92,6 +92,7 @@ async function handleUi(msg: UiRequest): Promise<unknown> {
       return null;
     case "link":
       if (!active) throw new Error("No account selected");
+      await setAccountStatus(active, { notice: undefined });
       await updateSettings((cur) => ({ linked: { ...cur.linked, [active]: true } }));
       await syncAllNow();
       return status();
@@ -107,6 +108,25 @@ async function handleUi(msg: UiRequest): Promise<unknown> {
     case "export":
       if (!active) throw new Error("No account selected");
       return engineFor(s, active).exportText();
+    case "devices":
+      return active ? serialized(() => engineFor(s, active).listDevices()) : [];
+    case "renameDevice": {
+      const name = msg.name.trim().slice(0, 60);
+      if (!name) throw new Error("Enter a name");
+      const at = Date.now();
+      if (msg.id === s.device.id) await local.set("device", { ...s.device, name, nameAt: at });
+      else if (!active) throw new Error("No account selected");
+      if (active) await serialized(() => engineFor(s, active).renameDevice(msg.id, name, at));
+      await changed();
+      return null;
+    }
+    case "removeDevice":
+      if (!active) throw new Error("No account selected");
+      await serialized(() => engineFor(s, active).removeDevice(msg.id));
+      if (msg.id === s.device.id) await detach(s, active);
+      await updateBadge();
+      await changed();
+      return null;
     case "settingsChanged":
       await registerContentScripts();
       schedule();
@@ -131,8 +151,14 @@ async function status(): Promise<Status> {
     syncing: isSyncing(),
     lastSync: st.lastSync,
     lastError: st.lastError,
+    notice: st.notice,
     counts: s.active ? await engineFor(s, s.active).stats() : undefined,
     devices: remote?.devices ?? [],
     openTabs: await openTabCount(),
   };
+}
+
+/** Tells an open popup to redraw. */
+async function changed(): Promise<void> {
+  await chrome.runtime.sendMessage({ type: "changed" }).catch(() => {});
 }

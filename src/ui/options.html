@@ -48,16 +48,27 @@
       </section>
 
       <section class="card">
-        <h2>This browser</h2>
-        <label for="device-name">Name shown to your other browsers</label>
-        <form id="device" class="row">
-          <input id="device-name" maxlength="60" />
-          <button class="primary">Save</button>
-        </form>
-        <p class="muted small" id="device-id"></p>
+        <h2>Browsers</h2>
+        <p class="muted small" id="browsers-note"></p>
+        <ul id="browsers" class="list browsers"></ul>
       </section>
       <p id="msg" class="muted"></p>
     </main>
+    <dialog id="browser">
+      <form id="browser-form">
+        <h2 id="browser-title"></h2>
+        <label for="browser-name">Name shown to your other browsers</label>
+        <input id="browser-name" maxlength="60" required autocomplete="off" />
+        <p class="muted small" id="browser-info"></p>
+        <p class="error small" id="browser-error"></p>
+        <div class="row">
+          <button type="button" id="browser-remove" class="danger">Remove</button>
+          <span class="grow"></span>
+          <button type="button" id="browser-cancel">Cancel</button>
+          <button class="primary" id="browser-save">Save</button>
+        </div>
+      </form>
+    </dialog>
     <script type="module" src="options.js"></script>
   </body>
 </html>

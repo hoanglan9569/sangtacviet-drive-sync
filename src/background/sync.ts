@@ -5,10 +5,10 @@
  * Runs are serialized: one sync at a time.
  */
 import { Drive, DRIVE_BASE } from "../shared/drive";
-import { type Replica, SyncEngine } from "../shared/engine";
+import { DeviceRemovedError, type Replica, SyncEngine, type SyncResult } from "../shared/engine";
 import type { ApplyReply, BackgroundToContent, ReadReply } from "../shared/messages";
 import { AuthError, tokenFor } from "./auth";
-import { type Settings, domainPatterns, getSettings, local, matchesDomain, setAccountStatus } from "./settings";
+import { type Settings, domainPatterns, getSettings, local, matchesDomain, setAccountStatus, updateSettings } from "./settings";
 
 export function engineFor(s: Settings, sub: string): SyncEngine {
   const account = s.accounts.find((a) => a.sub === sub);
@@ -74,6 +74,23 @@ export function syncAllNow(): Promise<void> {
   return run();
 }
 
+/** Runs `fn` between syncs, never during one: both read-modify-write an account's sync state. */
+export function serialized<T>(fn: () => Promise<T>): Promise<T> {
+  const p = chain.then(fn);
+  chain = p.then(
+    () => {},
+    () => {},
+  );
+  return p;
+}
+
+/** Stops syncing `sub` here and forgets its sync state (the page data stays). */
+export async function detach(s: Settings, sub: string, notice?: string): Promise<void> {
+  await engineFor(s, sub).forget();
+  await updateSettings((cur) => ({ linked: { ...cur.linked, [sub]: false } }));
+  await setAccountStatus(sub, { lastError: undefined, notice });
+}
+
 function run(): Promise<void> {
   const jobs = new Map(pending);
   pending.clear();
@@ -97,13 +114,15 @@ async function runJobs(jobs: Map<string, number | undefined>): Promise<void> {
   syncing = true;
   await chrome.runtime.sendMessage({ type: "changed" }).catch(() => {});
   try {
-    if (targets.size === 0) await engine.sync();
+    // Another browser renamed this one: keep the name.
+    const adopt = async (r: SyncResult) => r.device && (await local.set("device", r.device));
+    if (targets.size === 0) await adopt(await engine.sync());
     for (const [origin, tabId] of targets) {
       const started = Date.now();
       const k = timesKey(origin);
       const times = ((await chrome.storage.session.get(k))[k] as Record<string, number> | undefined) ?? {};
       try {
-        await engine.sync(tabReplica(origin, tabId, s.hosts), times);
+        await adopt(await engine.sync(tabReplica(origin, tabId, s.hosts), times));
       } catch (e) {
         // A tab that closed or has no content script yet is not an error worth showing.
         if (/Receiving end does not exist|No tab with id|message port closed/i.test(String(e))) continue;
@@ -116,8 +135,12 @@ async function runJobs(jobs: Map<string, number | undefined>): Promise<void> {
     await chrome.alarms.clear("retry");
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    await setAccountStatus(sub, { lastError: message });
-    if (!(e instanceof AuthError)) await chrome.alarms.create("retry", { delayInMinutes: 1 });
+    if (e instanceof DeviceRemovedError) {
+      await detach(s, sub, message);
+    } else {
+      await setAccountStatus(sub, { lastError: message });
+      if (!(e instanceof AuthError)) await chrome.alarms.create("retry", { delayInMinutes: 1 });
+    }
   } finally {
     syncing = false;
     await updateBadge();

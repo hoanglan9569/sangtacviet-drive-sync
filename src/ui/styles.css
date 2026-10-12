@@ -272,3 +272,47 @@ details {
 code {
   font-size: 12px;
 }
+.browsers li {
+  padding: 0;
+}
+.browsers button {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  padding: 6px 4px;
+  text-align: left;
+}
+.browsers button:hover {
+  background: var(--bg);
+}
+.grow {
+  flex: 1;
+}
+/* The form carries the padding, so a click on the dialog itself is a click on the backdrop. */
+dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+}
+dialog form {
+  padding: 16px;
+}
+dialog .row {
+  margin: 12px 0 0;
+}
+dialog input {
+  width: 100%;
+}
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+[hidden] {
+  display: none !important;
+}

@@ -68,7 +68,10 @@ Click the toolbar icon.
 
 The ☾/☀ button next to Settings switches between light and dark mode.
 
-Settings: domains (adding one asks for access to it), OAuth client ID, and the name other browsers see for this one.
+Settings: domains (adding one asks for access to it), the OAuth client ID, and **Browsers**, the account's browsers. The list refreshes on its own. Click a browser to:
+
+- **Rename** it. Another browser takes the new name at its next sync.
+- **Remove** it. Its file goes to the Drive trash, and anything it already synced stays. That browser stops syncing with the account until it is linked again from its own popup. "Remove this browser" does the same for the current browser.
 
 ## Development
 

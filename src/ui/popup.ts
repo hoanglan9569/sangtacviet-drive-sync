@@ -48,6 +48,7 @@ async function render(): Promise<void> {
 
   parts.push(accountsCard(s));
   const active = s.accounts.find((a) => a.sub === s.active);
+  if (active?.linked) summary = undefined; // fetched again if sync stops
   if (active) parts.push(active.linked ? syncCard(s, active) : linkCard(s, active));
   parts.push(h("footer", {}, `Sites: ${s.domains.join(", ")}`));
   app.replaceChildren(...parts);
@@ -102,6 +103,7 @@ function reconnectNotice(a: AccountView): HTMLElement | null {
 
 function linkCard(s: Status, a: AccountView): HTMLElement {
   const card = h("section", { class: "card" }, h("h2", {}, "Google Drive"));
+  if (s.notice) card.append(h("p", { class: "notice warn" }, s.notice));
   const notice = reconnectNotice(a);
   if (notice) {
     card.append(notice);
@@ -172,6 +174,7 @@ function syncCard(s: Status, a: AccountView): HTMLElement {
     card.append(
       h("h3", {}, "Browsers on this account"),
       h("ul", { class: "devices" }, ...s.devices.map((d) => h("li", {}, h("span", {}, d.self ? `${d.name} (this browser)` : d.name), h("small", {}, ago(d.updated))))),
+      h("button", { class: "link small", onclick: () => chrome.runtime.openOptionsPage() }, "Rename or remove browsers in Settings"),
     );
   }
   const stop = h("button", { class: "link danger" }, "Stop syncing in this browser");

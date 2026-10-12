@@ -11,7 +11,7 @@
  * Each browser writes only its own device file, so two browsers syncing at the
  * same moment cannot overwrite each other's changes on Drive.
  */
-import { Drive, DriveError, type DriveFile } from "./drive";
+import { Drive, DriveError, type DriveFile, quote } from "./drive";
 import {
   type Items,
   type WritePlan,
@@ -48,7 +48,12 @@ export interface KV {
 export interface Device {
   id: string;
   name: string;
+  /** When the name was last set (ms). A rename made in another browser wins when it is newer. */
+  nameAt?: number;
 }
+
+/** This browser's device file was removed (from another browser): it no longer syncs with the account. */
+export class DeviceRemovedError extends Error {}
 
 export interface DeviceFile {
   format: "stv-drive-sync/device";
@@ -88,6 +93,8 @@ export interface SyncResult {
   written: string[];
   pushed: boolean;
   counts: ReturnType<typeof counts>;
+  /** This browser's device, when another browser renamed it during this sync. */
+  device?: Device;
 }
 
 export interface RemoteSummary {
@@ -96,9 +103,8 @@ export interface RemoteSummary {
   exportUpdated?: string;
 }
 
-const TAGGED = ["root", "device", "export"]
-  .map((k) => `appProperties has { key='stvSync' and value='${k}' }`)
-  .join(" or ");
+const tag = (k: string) => `appProperties has { key='stvSync' and value='${k}' }`;
+const TAGGED = ["root", "device", "export"].map(tag).join(" or ");
 
 async function sha256(text: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -110,7 +116,7 @@ export class SyncEngine {
     private readonly kv: KV,
     private readonly drive: Drive,
     readonly account: string,
-    private readonly device: Device,
+    private device: Device,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -132,6 +138,13 @@ export class SyncEngine {
 
   async sync(replica?: Replica, times?: Record<string, number>): Promise<SyncResult> {
     const [state, remote] = await this.load();
+    const name = this.device.name;
+    const result = (written: string[]): SyncResult => ({
+      written,
+      pushed,
+      counts: counts(state.items),
+      device: this.device.name === name ? undefined : this.device,
+    });
     let pushed = false;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const now = this.now();
@@ -145,7 +158,7 @@ export class SyncEngine {
       await this.kv.set(this.stateKey, state);
       pushed = (await this.push(state, remote)) || pushed;
       await this.kv.set(this.remoteKey, remote);
-      if (!replica || !read) return { written: [], pushed, counts: counts(state.items) };
+      if (!replica || !read) return result([]);
 
       const plan = planWrites(read.snapshot, buildSnapshot(state.items, read.snapshot));
       if (!isEmptyPlan(plan) && !(await replica.apply(plan))) continue;
@@ -154,7 +167,7 @@ export class SyncEngine {
         remote.origins = [...(remote.origins ?? []), replica.origin];
         await this.kv.set(this.remoteKey, remote);
       }
-      return { written: Object.keys(plan.set), pushed, counts: counts(state.items) };
+      return result(Object.keys(plan.set));
     }
     throw new Error("The page kept changing its data during sync; will retry.");
   }
@@ -169,14 +182,18 @@ export class SyncEngine {
 
     let changed = false;
     const seen: Record<string, string> = {};
-    const devices: RemoteDevice[] = [];
-    for (const f of files.filter((f) => kind(f) === "device")) {
+    const mine = files.filter((f) => kind(f) === "device");
+    // Gone from the listing: check the file itself, since a just-created file can lag behind in search.
+    if (remote.deviceFileId && !mine.some((f) => f.id === remote.deviceFileId) && (await this.removed(remote.deviceFileId)))
+      throw new DeviceRemovedError("This browser was removed from the account in another browser.");
+    for (const f of mine) {
       const id = f.appProperties?.device ?? "";
-      const self = id === this.device.id;
-      devices.push({ id, name: f.appProperties?.deviceName ?? id, updated: f.modifiedTime, self });
-      if (self) {
+      if (id === this.device.id) {
         remote.deviceFileId ??= f.id;
-        if (f.id === remote.deviceFileId) continue;
+        if (f.id === remote.deviceFileId) {
+          this.adoptName(f, remote);
+          continue;
+        }
       }
       const sum = f.md5Checksum ?? f.modifiedTime ?? "";
       seen[f.id] = sum;
@@ -188,8 +205,35 @@ export class SyncEngine {
       changed = mergeItems(state.items, items) || changed;
     }
     remote.peers = seen;
-    remote.devices = devices;
+    remote.devices = this.devicesFrom(files);
     return changed;
+  }
+
+  private async removed(fileId: string): Promise<boolean> {
+    try {
+      return !!(await this.drive.get(fileId)).trashed;
+    } catch (e) {
+      if (e instanceof DriveError && e.status === 404) return true;
+      throw e;
+    }
+  }
+
+  /** Takes a newer name given to this browser elsewhere; re-uploads ours when Drive holds an older one. */
+  private adoptName(f: DriveFile, remote: RemoteState): void {
+    const name = f.appProperties?.deviceName;
+    const at = Number(f.appProperties?.deviceNameAt ?? 0);
+    if (name && at > (this.device.nameAt ?? 0)) this.device = { ...this.device, name, nameAt: at };
+    else if (name !== this.device.name.slice(0, 60)) remote.pushedRev = -1;
+  }
+
+  private devicesFrom(files: DriveFile[]): RemoteDevice[] {
+    return files
+      .filter((f) => f.appProperties?.stvSync === "device")
+      .map((f) => {
+        const id = f.appProperties?.device ?? "";
+        const self = id === this.device.id;
+        return { id, name: self ? this.device.name : (f.appProperties?.deviceName ?? id), updated: f.modifiedTime, self };
+      });
   }
 
   /** Uploads this browser's device file and dulieu.txt when they changed. */
@@ -206,7 +250,7 @@ export class SyncEngine {
     remote.deviceFileId = await this.upsert(remote.deviceFileId, JSON.stringify(file), "application/json", {
       name: `device-${this.device.id}.json`,
       parents: [folder],
-      appProperties: { stvSync: "device", device: this.device.id, deviceName: this.device.name.slice(0, 60) },
+      appProperties: { stvSync: "device", device: this.device.id, ...this.nameProps(this.device.name, this.device.nameAt ?? 0) },
     });
     remote.pushedRev = state.rev;
     const self: RemoteDevice = { id: this.device.id, name: this.device.name, updated: new Date(this.now()).toISOString(), self: true };
@@ -248,17 +292,52 @@ export class SyncEngine {
     return remote.folderId;
   }
 
+  private nameProps(name: string, at: number): Record<string, string> {
+    return { deviceName: name.slice(0, 60), deviceNameAt: String(at) };
+  }
+
   /** What Drive holds for this account, without changing anything. */
   async summary(): Promise<RemoteSummary> {
     const files = await this.drive.list(`trashed=false and (${TAGGED})`);
-    const devices = files
-      .filter((f) => f.appProperties?.stvSync === "device")
-      .map((f) => {
-        const id = f.appProperties?.device ?? "";
-        return { id, name: f.appProperties?.deviceName ?? id, updated: f.modifiedTime, self: id === this.device.id };
-      });
+    const devices = this.devicesFrom(files);
     const exp = files.find((f) => f.appProperties?.stvSync === "export");
     return { exists: devices.length > 0 || !!exp, devices, exportUpdated: exp?.modifiedTime };
+  }
+
+  private deviceFiles(id: string): Promise<DriveFile[]> {
+    return this.drive.list(`trashed=false and ${tag("device")} and appProperties has { key='device' and value=${quote(id)} }`);
+  }
+
+  /** Lists the account's browsers from Drive and refreshes the cached list (once this account has synced here). */
+  async listDevices(): Promise<RemoteDevice[]> {
+    const devices = this.devicesFrom(await this.drive.list(`trashed=false and ${tag("device")}`));
+    await this.updateCache((remote) => (remote.devices = devices));
+    return devices;
+  }
+
+  /** Renames a browser on Drive; that browser takes the name at its next sync. */
+  async renameDevice(id: string, name: string, at: number): Promise<void> {
+    if (id === this.device.id) this.device = { ...this.device, name, nameAt: at };
+    for (const f of await this.deviceFiles(id)) await this.drive.patch(f.id, { appProperties: this.nameProps(name, at) });
+    await this.updateCache((remote) => (remote.devices = remote.devices.map((d) => (d.id === id ? { ...d, name } : d))));
+  }
+
+  /**
+   * Moves a browser's device file to the Drive trash. Its changes already merged stay; that
+   * browser stops syncing with this account at its next sync. Removing this browser also
+   * forgets its sync state here, like a fresh install.
+   */
+  async removeDevice(id: string): Promise<void> {
+    for (const f of await this.deviceFiles(id)) await this.drive.patch(f.id, { trashed: true });
+    if (id === this.device.id) return this.forget();
+    await this.updateCache((remote) => (remote.devices = remote.devices.filter((d) => d.id !== id)));
+  }
+
+  private async updateCache(fn: (remote: RemoteState) => void): Promise<void> {
+    const remote = await this.kv.get<RemoteState>(this.remoteKey);
+    if (!remote) return;
+    fn(remote);
+    await this.kv.set(this.remoteKey, remote);
   }
 
   async exportText(): Promise<string> {

@@ -1,4 +1,4 @@
-import type { KV } from "../shared/engine";
+import type { Device, KV } from "../shared/engine";
 import type { Account } from "../shared/messages";
 
 export const DEFAULT_DOMAINS = ["sangtacviet.com", "sangtacviet.app"];
@@ -7,7 +7,7 @@ declare const __CLIENT_ID__: string;
 
 export interface Settings {
   clientId: string;
-  device: { id: string; name: string };
+  device: Device;
   domains: string[];
   accounts: Account[];
   active?: string;
@@ -22,6 +22,7 @@ export interface AccountStatus {
   lastSync?: number;
   lastError?: string;
   needsAuth?: boolean;
+  notice?: string;
 }
 
 export const local: KV = {

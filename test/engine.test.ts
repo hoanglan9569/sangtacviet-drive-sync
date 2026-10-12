@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
 import { FakeDrive } from "./fake-drive";
+import { DeviceRemovedError } from "../src/shared/engine";
 import { Clock, FakePage, device } from "./helpers";
 
 const drive = new FakeDrive().start();
@@ -206,4 +207,58 @@ test("summary reports an existing backup to a new account link", async () => {
   const s = await b.engine.summary();
   expect(s.exists).toBe(true);
   expect(s.devices.map((d) => [d.id, d.self])).toEqual([["A", false]]);
+});
+
+test("a browser renamed from another one takes the new name and keeps it", async () => {
+  const a = device(drive, "A", clock);
+  const b = device(drive, "B", clock);
+  const pa = new FakePage(undefined, clock);
+  const pb = new FakePage(undefined, clock);
+  pa.read_("qidian", "100", 5);
+  await a.engine.sync(pa, pa.times);
+  await b.engine.sync(pb, pb.times);
+
+  await a.engine.renameDevice("B", "Laptop", clock.tick());
+  expect((await a.engine.listDevices()).map((d) => [d.id, d.name])).toEqual([["A", "A"], ["B", "Laptop"]]);
+  const r = await b.engine.sync(pb, pb.times);
+  expect(r.device).toEqual({ id: "B", name: "Laptop", nameAt: clock.t });
+
+  clock.tick();
+  pb.read_("qidian", "100", 6); // B pushes again: the new name must survive it
+  await b.engine.sync(pb, pb.times);
+  expect((await a.engine.listDevices()).find((d) => d.id === "B")?.name).toBe("Laptop");
+});
+
+test("a removed browser stops syncing; what it synced stays, and linking again re-adds it", async () => {
+  const a = device(drive, "A", clock);
+  const b = device(drive, "B", clock);
+  const pa = new FakePage(undefined, clock);
+  const pb = new FakePage(undefined, clock);
+  pb.read_("fanqie", "200", 9);
+  await b.engine.sync(pb, pb.times);
+  await a.engine.sync(pa, pa.times);
+
+  await a.engine.removeDevice("B");
+  expect((await a.engine.listDevices()).map((d) => d.id)).toEqual(["A"]);
+  expect(drive.byKind("device")).toHaveLength(1);
+  clock.tick();
+  await a.engine.sync(pa, pa.times);
+  expect(pa.books()).toEqual(["200@9"]);
+
+  clock.tick();
+  pb.read_("fanqie", "200", 10);
+  await expect(b.engine.sync(pb, pb.times)).rejects.toBeInstanceOf(DeviceRemovedError);
+  await b.engine.forget(); // what the extension does on DeviceRemovedError
+  await b.engine.sync(pb, pb.times);
+  expect((await a.engine.listDevices()).map((d) => d.id).sort()).toEqual(["A", "B"]);
+});
+
+test("removing this browser trashes its file and forgets its sync state", async () => {
+  const a = device(drive, "A", clock);
+  const pa = new FakePage(undefined, clock);
+  pa.read_("qidian", "100", 5);
+  await a.engine.sync(pa, pa.times);
+  await a.engine.removeDevice("A");
+  expect(drive.byKind("device")).toHaveLength(0);
+  expect([...a.kv.data.keys()]).toEqual([]);
 });

@@ -1,4 +1,4 @@
-import type { RemoteDevice, RemoteSummary } from "./engine";
+import type { Device, RemoteDevice, RemoteSummary } from "./engine";
 import type { WritePlan, counts } from "./model";
 import type { Snapshot } from "./sitedata";
 
@@ -33,6 +33,9 @@ export type UiRequest =
   | { type: "unlink" }
   | { type: "syncNow" }
   | { type: "export" }
+  | { type: "devices" }
+  | { type: "renameDevice"; id: string; name: string }
+  | { type: "removeDevice"; id: string }
   | { type: "settingsChanged" };
 
 export interface Account {
@@ -50,12 +53,14 @@ export interface AccountView extends Account {
 export interface Status {
   clientId: boolean;
   redirectUri: string;
-  device: { id: string; name: string };
+  device: Device;
   domains: string[];
   accounts: AccountView[];
   active?: string;
   syncing: boolean;
   lastSync?: number;
+  /** Why sync stopped on its own, e.g. this browser was removed in another one. */
+  notice?: string;
   lastError?: string;
   counts?: ReturnType<typeof counts>;
   devices: RemoteDevice[];
