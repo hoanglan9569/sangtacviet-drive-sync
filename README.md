@@ -49,7 +49,9 @@ bun run build          # -> dist/extension
 1. `chrome://extensions` → Developer mode → **Load unpacked** → `dist/extension`. The ID is fixed by the manifest `key`: `dkgknammpnaadehadhbojamiogakmnhh`.
 2. Create a Google OAuth client (once):
    - [console.cloud.google.com](https://console.cloud.google.com) → new project → enable **Google Drive API**.
-   - **OAuth consent screen**: External. Scopes: `openid`, `email`, `profile`, `.../auth/drive.file`. Then **Publish app**: `drive.file` needs no review, and an app left in "Testing" loses its sign-in after 7 days.
+   - **Google Auth Platform** → Get started: app name, support email, audience **External**, contact email.
+   - **Branding**: fill in the home page and privacy policy links (e.g. this repo); **Publish app** stays disabled until you do.
+   - **Audience → Publish app**: `drive.file` needs no review, and an app left in "Testing" loses its sign-in after 7 days.
    - **Credentials → OAuth client ID** → **Web application**. Authorized redirect URI: `https://dkgknammpnaadehadhbojamiogakmnhh.chromiumapp.org/`.
 3. Put the client ID in the extension's **Settings**, or bake it in: `STV_GOOGLE_CLIENT_ID=… ` in `.env`, then `bun run build`.
 
