@@ -1,0 +1,389 @@
+:root {
+  --bg: #f6f7f9;
+  --card: #fff;
+  --text: #1f2328;
+  --muted: #646d76;
+  --line: #e2e5e9;
+  --accent: #1a73e8;
+  --accent-text: #fff;
+  --good: #188038;
+  --bad: #d93025;
+  --warn-bg: #fef7e0;
+  color-scheme: light;
+}
+/* Dark: the OS setting unless the toggle picked light, or the toggle picked dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1b1c1f;
+    --card: #26272b;
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --line: #3a3b40;
+    --accent: #8ab4f8;
+    --accent-text: #0b1f3a;
+    --good: #81c995;
+    --bad: #f28b82;
+    --warn-bg: #3a3221;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1b1c1f;
+  --card: #26272b;
+  --text: #e8eaed;
+  --muted: #9aa0a6;
+  --line: #3a3b40;
+  --accent: #8ab4f8;
+  --accent-text: #0b1f3a;
+  --good: #81c995;
+  --bad: #f28b82;
+  --warn-bg: #3a3221;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+body.popup {
+  width: 360px;
+}
+body.options main {
+  max-width: 640px;
+  margin: 0 auto;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+}
+h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+h3 {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+main {
+  padding: 10px;
+}
+p {
+  margin: 0 0 10px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.error {
+  color: var(--bad);
+}
+button {
+  font: inherit;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+button.link {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  padding: 4px 0;
+}
+button.danger {
+  color: var(--bad);
+}
+button.icon {
+  display: inline-flex;
+  border: 0;
+  background: none;
+  padding: 4px;
+  font-size: 16px;
+  color: var(--muted);
+}
+header button.icon:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  min-width: 0;
+  flex: 1;
+}
+label {
+  display: block;
+  margin: 8px 0 4px;
+  color: var(--muted);
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.account.active {
+  border-color: var(--accent);
+}
+.account input {
+  flex: none;
+  margin: 0;
+}
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--line);
+  font-weight: 600;
+}
+.who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.who b,
+.who small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.who small {
+  color: var(--muted);
+}
+.badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.badge.ok {
+  color: var(--good);
+}
+.badge.warn {
+  color: var(--bad);
+}
+.notice.warn {
+  background: var(--warn-bg);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 10px;
+}
+.status::before {
+  content: "●";
+  margin-right: 6px;
+}
+.status.good::before {
+  color: var(--good);
+}
+.status.bad {
+  color: var(--bad);
+}
+.status.busy::before {
+  color: var(--accent);
+}
+.devices,
+.list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.devices li,
+.list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.devices small {
+  color: var(--muted);
+}
+footer {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 4px;
+}
+details {
+  margin-top: 8px;
+}
+code {
+  font-size: 12px;
+}
+.browsers li {
+  padding: 0;
+}
+.browsers button {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  padding: 6px 4px;
+  text-align: left;
+}
+.browsers button:hover {
+  background: var(--bg);
+}
+.grow {
+  flex: 1;
+}
+/* The form carries the padding, so a click on the dialog itself is a click on the backdrop. */
+dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+}
+dialog > form,
+dialog > .body {
+  padding: 16px;
+}
+dialog .row {
+  margin: 12px 0 0;
+}
+dialog input:not([type]) {
+  width: 100%;
+}
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+[hidden] {
+  display: none !important;
+}
+.card.clickable {
+  cursor: pointer;
+}
+.card.clickable:hover,
+.card.clickable:focus-visible {
+  border-color: var(--accent);
+}
+.card.clickable p {
+  margin: 0;
+}
+dialog.wide {
+  width: min(560px, calc(100vw - 32px));
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.dialog-head h2 {
+  margin: 0;
+}
+label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+label.inline input {
+  width: 72px;
+  flex: none;
+}
+.versions {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 8px 6px;
+  margin-bottom: 8px;
+}
+.versions h3 {
+  position: sticky;
+  top: 0;
+  margin: 0;
+  padding: 8px 0 4px;
+  background: var(--card);
+}
+.versions .muted {
+  margin: 8px 0;
+}
+.version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 5px 6px;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+.version:hover {
+  background: var(--bg);
+}
+.version.selected {
+  background: var(--bg);
+  outline: 1px solid var(--accent);
+}
+.version input {
+  flex: none;
+  margin: 0;
+}

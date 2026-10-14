@@ -24,30 +24,6 @@
       </section>
 
       <section class="card">
-        <h2>Google sign-in</h2>
-        <label for="client-id">OAuth client ID</label>
-        <form id="client" class="row">
-          <input id="client-id" placeholder="…apps.googleusercontent.com" autocomplete="off" spellcheck="false" />
-          <button class="primary">Save</button>
-        </form>
-        <label for="redirect">Authorized redirect URI (paste into the OAuth client)</label>
-        <div class="row">
-          <input id="redirect" readonly />
-          <button id="copy" type="button">Copy</button>
-        </div>
-        <details>
-          <summary>How to create the client ID</summary>
-          <ol>
-            <li>console.cloud.google.com → create a project → <b>APIs &amp; Services → Library</b> → enable <b>Google Drive API</b>.</li>
-            <li><b>Google Auth Platform → Get started</b>: app name, support email, audience <b>External</b>, contact email.</li>
-            <li><b>Branding</b>: add a home page and a privacy policy link; then <b>Audience → Publish app</b> (drive.file needs no review).</li>
-            <li><b>Clients → Create client</b> → type <b>Web application</b> → add the redirect URI above.</li>
-            <li>Copy the client ID here and press Save.</li>
-          </ol>
-        </details>
-      </section>
-
-      <section class="card">
         <h2>Browsers</h2>
         <p class="muted small" id="browsers-note"></p>
         <ul id="browsers" class="list browsers"></ul>

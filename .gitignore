@@ -1,11 +1,10 @@
 # Dependencies
 node_modules/
 
-# Build output
-dist/
+# Build output (dist/ is committed: the repo root loads unpacked as-is)
 *.tsbuildinfo
 
-# Local OAuth client id for builds (see README)
+# Local env
 .env
 .env.*
 

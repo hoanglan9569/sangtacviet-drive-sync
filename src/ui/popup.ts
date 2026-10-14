@@ -32,20 +32,6 @@ async function render(): Promise<void> {
   const parts: Node[] = [];
   if (error) parts.push(h("p", { class: "error", onclick: () => ((error = ""), render()) }, error));
 
-  if (!s.clientId) {
-    parts.push(
-      h(
-        "section",
-        { class: "card" },
-        h("h2", {}, "One-time setup"),
-        h("p", {}, "Paste your Google OAuth client ID in Settings to enable Google sign-in. The README explains how to create one."),
-        h("button", { class: "primary", onclick: () => chrome.runtime.openOptionsPage() }, "Open settings"),
-      ),
-    );
-    app.replaceChildren(...parts);
-    return;
-  }
-
   parts.push(accountsCard(s));
   const active = s.accounts.find((a) => a.sub === s.active);
   if (active?.linked) summary = undefined; // fetched again if sync stops

@@ -2,11 +2,8 @@ import type { Device, KV } from "../shared/engine";
 import type { Account } from "../shared/messages";
 
 export const DEFAULT_DOMAINS = ["sangtacviet.com", "sangtacviet.app"];
-/** Baked in at build time from $env:STV_GOOGLE_CLIENT_ID; the Settings page can override it. */
-declare const __CLIENT_ID__: string;
 
 export interface Settings {
-  clientId: string;
   device: Device;
   domains: string[];
   accounts: Account[];
@@ -61,7 +58,6 @@ function ensureDevice(): Promise<Settings["device"]> {
 export async function getSettings(): Promise<Settings> {
   const s = (await local.get<Partial<Settings>>("settings")) ?? {};
   return {
-    clientId: s.clientId || (typeof __CLIENT_ID__ === "string" ? __CLIENT_ID__ : ""),
     device: (await local.get<Settings["device"]>("device")) ?? (await ensureDevice()),
     domains: s.domains ?? DEFAULT_DOMAINS,
     accounts: s.accounts ?? [],

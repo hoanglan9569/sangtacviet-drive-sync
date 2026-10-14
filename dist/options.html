@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SangTacViet Drive Sync — Settings</title>
+    <script src="theme-init.js"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="options">
+    <header>
+      <img src="icons/32.png" alt="" width="24" height="24" />
+      <h1>SangTacViet Drive Sync — Settings</h1>
+      <button id="theme" class="icon"></button>
+    </header>
+    <main>
+      <section class="card">
+        <h2>Sites</h2>
+        <p class="muted">SangTacViet domains to sync. Each domain keeps its own copy of your data in the browser; all of them are kept in step.</p>
+        <ul id="domains" class="list"></ul>
+        <form id="add-domain" class="row">
+          <input id="domain" placeholder="Add a domain, e.g. sangtacviet.vip" autocomplete="off" />
+          <button class="primary">Add</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Browsers</h2>
+        <p class="muted small" id="browsers-note"></p>
+        <ul id="browsers" class="list browsers"></ul>
+      </section>
+      <section class="card clickable" id="versions-card" role="button" tabindex="0" title="Manage versions">
+        <h2>Versions</h2>
+        <p class="muted small" id="versions-summary">…</p>
+      </section>
+      <p id="msg" class="muted"></p>
+    </main>
+    <dialog id="versions-dialog" class="wide">
+      <div class="body">
+        <div class="dialog-head">
+          <h2>Versions</h2>
+          <button type="button" class="icon" id="versions-close" aria-label="Close">✕</button>
+        </div>
+        <p class="muted small">Every sync that changes your data saves a version of <code>dulieu.txt</code>, in its Google Drive version history, kept forever. Drive keeps up to 200 per file: past <span id="keep-forever">180</span>, the oldest become <b>temporary</b> and Drive deletes them after 30 days.</p>
+        <div id="versions" class="versions" role="radiogroup" aria-label="Versions"></div>
+        <p class="error small" id="versions-error"></p>
+        <div class="row">
+          <button type="button" id="version-save-now">Save a version now</button>
+          <span class="grow"></span>
+          <button type="button" id="version-download" disabled>Download</button>
+          <button type="button" id="version-delete" class="danger" disabled>Delete</button>
+          <button type="button" id="version-restore" class="primary" disabled>Restore</button>
+        </div>
+      </div>
+    </dialog>
+    <dialog id="browser">
+      <form id="browser-form">
+        <h2 id="browser-title"></h2>
+        <label for="browser-name">Name shown to your other browsers</label>
+        <input id="browser-name" maxlength="60" required autocomplete="off" />
+        <p class="muted small" id="browser-info"></p>
+        <p class="error small" id="browser-error"></p>
+        <div class="row">
+          <button type="button" id="browser-remove" class="danger">Remove</button>
+          <span class="grow"></span>
+          <button type="button" id="browser-cancel">Cancel</button>
+          <button class="primary" id="browser-save">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

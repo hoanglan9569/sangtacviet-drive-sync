@@ -6,8 +6,14 @@
  * (signed out, access revoked) the account is marked "needs sign-in".
  */
 import type { Account } from "../shared/messages";
-import { getSettings, setAccountStatus, updateSettings } from "./settings";
+import { setAccountStatus, updateSettings } from "./settings";
 
+/**
+ * The extension's own OAuth client (Web application, redirect URI
+ * https://dkgknammpnaadehadhbojamiogakmnhh.chromiumapp.org/, fixed by the manifest key).
+ * Not a secret: the token flow has no client secret, so every install shares it.
+ */
+const CLIENT_ID = "415848440355-t5p3rnos93lac5v1trt6tgl1udcbmamr.apps.googleusercontent.com";
 const SCOPES = ["openid", "email", "profile", "https://www.googleapis.com/auth/drive.file"];
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
@@ -19,11 +25,9 @@ interface Token {
 export class AuthError extends Error {}
 
 async function flow(o: { interactive: boolean; loginHint?: string; prompt?: string }): Promise<Token> {
-  const { clientId } = await getSettings();
-  if (!clientId) throw new AuthError("Set the Google OAuth client ID in Settings first.");
   const state = crypto.randomUUID();
   const p = new URLSearchParams({
-    client_id: clientId,
+    client_id: CLIENT_ID,
     redirect_uri: chrome.identity.getRedirectURL(),
     response_type: "token",
     scope: SCOPES.join(" "),

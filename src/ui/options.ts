@@ -16,8 +16,6 @@ const msg = (text: string, bad = false) => {
 
 async function render(): Promise<void> {
   const s = await getSettings();
-  $<HTMLInputElement>("client-id").value = s.clientId;
-  $<HTMLInputElement>("redirect").value = chrome.identity.getRedirectURL();
   const list = await Promise.all(
     s.domains.map(async (d) => {
       const granted = await chrome.permissions.contains({ origins: domainPatterns([d]) });
@@ -65,19 +63,6 @@ async function removeDomain(d: string): Promise<void> {
   await call({ type: "settingsChanged" });
   await render();
 }
-
-$("client").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const id = $<HTMLInputElement>("client-id").value.trim();
-  if (id && !/\.apps\.googleusercontent\.com$/.test(id)) return msg("A client ID ends with .apps.googleusercontent.com", true);
-  await updateSettings(() => ({ clientId: id }));
-  msg("Client ID saved.");
-});
-
-$("copy").addEventListener("click", async () => {
-  await navigator.clipboard.writeText($<HTMLInputElement>("redirect").value);
-  msg("Redirect URI copied.");
-});
 
 // Browsers on the selected account: listed from Drive; a click opens a dialog to rename or remove one.
 let status: Status | undefined;

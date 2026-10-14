@@ -1,11 +1,9 @@
 /**
  * Builds the extension's scripts and pages into dist/. The repo root is the
- * unpacked extension: manifest.json there points into dist/.
+ * unpacked extension: manifest.json there points into dist/. dist/ is committed,
+ * so a fresh clone loads without building; rebuild after changing src/.
  *
  *   bun run build
- *
- * $env:STV_GOOGLE_CLIENT_ID (or STV_GOOGLE_CLIENT_ID in .env) is baked in as
- * the default OAuth client ID; without it, set one in the Settings page.
  */
 import { cpSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -26,7 +24,6 @@ const ENTRIES: { src: string; out: string; format: "esm" | "iife" }[] = [
 const STATIC = ["ui/popup.html", "ui/options.html", "ui/styles.css"];
 
 rmSync(OUT, { recursive: true, force: true });
-const clientId = process.env.STV_GOOGLE_CLIENT_ID ?? "";
 for (const e of ENTRIES) {
   const result = await Bun.build({
     entrypoints: [join(SRC, e.src)],
@@ -34,7 +31,6 @@ for (const e of ENTRIES) {
     target: "browser",
     format: e.format,
     naming: `${e.out}.[ext]`,
-    define: { __CLIENT_ID__: JSON.stringify(clientId) },
   });
   if (!result.success) {
     for (const log of result.logs) console.error(log);
@@ -47,4 +43,4 @@ cpSync(join(SRC, "icons"), join(OUT, "icons"), { recursive: true });
 const { version } = (await Bun.file(join(ROOT, "package.json")).json()) as { version: string };
 const manifest = (await Bun.file(join(ROOT, "manifest.json")).json()) as { version: string };
 if (manifest.version !== version) throw new Error(`manifest.json version ${manifest.version} != package.json ${version}`);
-console.log(`extension -> ${OUT} (load unpacked: ${ROOT})${clientId ? "" : "  (no STV_GOOGLE_CLIENT_ID: set the client ID in Settings)"}`);
+console.log(`extension -> ${OUT} (load unpacked: ${ROOT})`);

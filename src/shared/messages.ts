@@ -57,8 +57,6 @@ export interface AccountView extends Account {
 }
 
 export interface Status {
-  clientId: boolean;
-  redirectUri: string;
   device: Device;
   domains: string[];
   accounts: AccountView[];

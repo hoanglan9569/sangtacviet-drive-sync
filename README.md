@@ -49,22 +49,13 @@ service worker      background.js
 
 ## Setup
 
-Building needs [Bun](https://bun.sh).
+No build, no Google Cloud setup: `dist/` is committed and the OAuth client is built in.
 
-```powershell
-bun install
-bun run build          # scripts and pages -> dist/
-```
+1. Clone this repo.
+2. `chrome://extensions` → Developer mode → **Load unpacked** → this repo's folder (its `manifest.json` points into `dist/`). The ID is fixed by the manifest `key`: `dkgknammpnaadehadhbojamiogakmnhh`.
+3. Click the toolbar icon → **Connect Google account** → allow Drive access.
 
-1. `chrome://extensions` → Developer mode → **Load unpacked** → this repo's folder (its `manifest.json` points into `dist/`). The ID is fixed by the manifest `key`: `dkgknammpnaadehadhbojamiogakmnhh`.
-2. Create a Google OAuth client (once):
-   - [console.cloud.google.com](https://console.cloud.google.com) → new project → enable **Google Drive API**.
-   - **Google Auth Platform** → Get started: app name, support email, audience **External**, contact email.
-   - **Branding**: fill in the home page and privacy policy links (e.g. this repo); **Publish app** stays disabled until you do.
-   - **Audience → Publish app**: `drive.file` needs no review, and an app left in "Testing" loses its sign-in after 7 days.
-   - **Credentials → OAuth client ID** → **Web application**. Authorized redirect URI: `https://dkgknammpnaadehadhbojamiogakmnhh.chromiumapp.org/`.
-3. Put the client ID in the extension's **Settings**, or bake it in: `STV_GOOGLE_CLIENT_ID=… ` in `.env`, then `bun run build`.
-
+The OAuth client (`CLIENT_ID` in `src/background/auth.ts`) is a **Web application** client with redirect URI `https://dkgknammpnaadehadhbojamiogakmnhh.chromiumapp.org/`. It holds no secret, so every install shares it. Its Google Auth Platform app must stay **In production** (Audience): in Testing, only listed test users can sign in.
 ## Usage
 
 Click the toolbar icon.
@@ -78,7 +69,7 @@ Click the toolbar icon.
 
 The ☾/☀ button next to Settings switches between light and dark mode.
 
-Settings: domains (adding one asks for access to it), the OAuth client ID, and **Browsers**, the account's browsers. The list refreshes on its own. Click a browser to:
+Settings: domains (adding one asks for access to it) and **Browsers**, the account's browsers. The list refreshes on its own. Click a browser to:
 
 - **Rename** it. Another browser takes the new name at its next sync.
 - **Remove** it. Its file goes to the Drive trash, and anything it already synced stays. That browser stops syncing with the account until it is linked again from its own popup. "Remove this browser" does the same for the current browser.
@@ -95,6 +86,8 @@ Settings: domains (adding one asks for access to it), the OAuth client ID, and *
 ## Development
 
 ```powershell
+bun install
+bun run build          # src/ -> dist/; commit dist/ with the change
 bun run check          # typecheck + tests
 bun run test/fake-drive.ts 8787 [--file state.json]   # fake Drive for manual/browser runs (set settings.driveBase)
 ```

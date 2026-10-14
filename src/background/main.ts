@@ -159,8 +159,6 @@ async function status(): Promise<Status> {
   const st = s.active ? await getAccountStatus(s.active) : {};
   const remote = s.active ? await local.get<{ devices?: RemoteDevice[] }>(`remote:${s.active}`) : undefined;
   return {
-    clientId: !!s.clientId,
-    redirectUri: chrome.identity.getRedirectURL(),
     device: s.device,
     domains: s.domains,
     accounts,
