@@ -51,8 +51,10 @@ service worker      background.js
 
 No build, no Google Cloud setup: `dist/` is committed and the OAuth client is built in.
 
-1. Clone this repo.
-2. `chrome://extensions` → Developer mode → **Load unpacked** → this repo's folder (its `manifest.json` points into `dist/`). The ID is fixed by the manifest `key`: `dkgknammpnaadehadhbojamiogakmnhh`.
+1. Download the latest `sangtacviet-drive-sync-*.zip` from [Releases](https://github.com/hoanglan9569/sangtacviet-drive-sync/releases/latest) and unzip it, or clone this repo.
+2. `chrome://extensions` → Developer mode → **Load unpacked** → the unzipped folder or this repo's folder (its `manifest.json` points into `dist/`). The ID is fixed by the manifest `key`: `dkgknammpnaadehadhbojamiogakmnhh`.
+
+Every push to `main` runs `.github/workflows/release.yml`: typecheck, tests, build, then a GitHub release `v<version>-build.<run>` with the zip.
 3. Click the toolbar icon → **Connect Google account** → allow Drive access.
 
 The OAuth client (`CLIENT_ID` in `src/background/auth.ts`) is a **Web application** client with redirect URI `https://dkgknammpnaadehadhbojamiogakmnhh.chromiumapp.org/`. It holds no secret, so every install shares it. Its Google Auth Platform app must stay **In production** (Audience): in Testing, only listed test users can sign in.

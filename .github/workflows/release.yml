@@ -1,0 +1,55 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck and test
+        run: bun run check
+
+      - name: Build
+        run: bun run build
+
+      - name: Package
+        id: pkg
+        run: |
+          version=$(jq -r .version manifest.json)
+          tag="v${version}-build.${GITHUB_RUN_NUMBER}"
+          zip="sangtacviet-drive-sync-${version}-build.${GITHUB_RUN_NUMBER}.zip"
+          zip -r -X "$zip" manifest.json dist
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.pkg.outputs.tag }}
+          ZIP: ${{ steps.pkg.outputs.zip }}
+        run: |
+          notes="Built from ${GITHUB_SHA::7} on main. Unzip, then chrome://extensions > Developer mode > Load unpacked > the unzipped folder."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" --clobber
+          else
+            gh release create "$TAG" "$ZIP" --target "$GITHUB_SHA" --title "$TAG" --notes "$notes" --latest
+          fi
